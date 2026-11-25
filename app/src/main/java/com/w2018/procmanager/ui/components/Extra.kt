@@ -33,6 +33,11 @@ import androidx.compose.material.icons.outlined.DeveloperBoard
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Monitor
+import androidx.compose.material.icons.outlined.SdCard
+import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Refresh
@@ -116,6 +121,11 @@ fun icVec(name: String): ImageVector = when (name) {
     "cable" -> Icons.Outlined.Cable
     "rank" -> Icons.Outlined.EmojiEvents
     "back" -> Icons.AutoMirrored.Outlined.ArrowBack
+    "screen" -> Icons.Outlined.Smartphone
+    "storage" -> Icons.Outlined.SdCard
+    "network" -> Icons.Outlined.Wifi
+    "ram" -> Icons.Outlined.Memory
+    "monitor" -> Icons.Outlined.Monitor
     else -> Icons.Outlined.Info
 }
 

@@ -88,6 +88,10 @@ data class Cfg(
 
 /** 全局 UI 状态与动作。 */
 class AppUi(val app: ProcApp) {
+
+    /** 执行一条 shell 命令并返回输出（失败返回空串），用于读取 /proc、/sys 等设备信息。 */
+    suspend fun sh(cmd: String): String = runCatching { app.channels.run(cmd, 8000).output }.getOrDefault("")
+
     var cfg by mutableStateOf(Cfg.from(app.settings)); private set
     var snapshot by mutableStateOf<Snapshot?>(null); private set
 

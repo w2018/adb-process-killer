@@ -493,7 +493,29 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                     leading = { Ic("zap", 17, C.danger) },
                 )
             }
-            Text("冻结=pm disable-user，终止=am force-stop；本应用不会卸载应用或清除数据，均需 Shizuku 或 ADB 授权。",
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val autoBlocked = ui.isAutoStartBlocked(pkg)
+                ProcButton(
+                    text = if (autoBlocked) "恢复自启" else "禁止自启",
+                    onClick = {
+                        confirm.show(
+                            if (autoBlocked) "恢复 ${a.label} 开机自启?" else "禁止 ${a.label} 开机自启?",
+                            (if (a.autoStart) "" else "注意：该应用未声明开机自启接收器，操作可能无明显效果。\n") +
+                                "通过系统 AppOps（RUN_ANY_IN_BACKGROUND）限制其开机/后台自启，不改动应用、不冻结，可随时恢复。"
+                        ) {
+                            scope.launch {
+                                val ok = ui.setAutoStartBlocked(pkg, !autoBlocked)
+                                toast.show(if (ok) (if (autoBlocked) "已恢复开机自启" else "已禁止开机自启") else "操作失败，请检查权限通道")
+                            }
+                        }
+                    },
+                    kind = BtnKind.Ghost,
+                    modifier = Modifier.weight(1f),
+                    leading = { Ic("power", 17, C.text) },
+                )
+            }
+            Text("冻结=pm disable-user，终止=am force-stop，禁止自启=AppOps；本应用不会卸载应用或清除数据，均需 Shizuku 或 ADB 授权。",
                 color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 14.dp), lineHeight = 15.sp)
         }
     }

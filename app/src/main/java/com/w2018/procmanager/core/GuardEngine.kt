@@ -68,7 +68,6 @@ class GuardEngine(private val app: ProcApp) {
     )
     private val scanTimes = ArrayDeque<Long>()
     /** 最近使用（前台出现过）的应用及时间戳，用于「常用应用保护」。 */
-    private val recentFg = HashMap<String, Long>()
 
     private var protected: Set<String> = emptySet()
     private var lastSkipLog = 0L
@@ -89,7 +88,6 @@ class GuardEngine(private val app: ProcApp) {
                     if (prev != null && prev != pkg) bgSince.putIfAbsent(prev, now)
                     bgSince.remove(pkg)
                     lastFg = pkg
-                    recentFg[pkg] = now
                     kick.trySend(Unit)
                 }
             }
@@ -208,13 +206,6 @@ class GuardEngine(private val app: ProcApp) {
         (pct <= app.settings.boostBatteryPct) to (tempC >= app.settings.boostTempC)
     }.getOrDefault(false to false)
 
-    /** 「常用应用保护」：最近 10 分钟内使用过的应用集合（未开启则返回空）。 */
-    private fun recentlyUsed(): Set<String> {
-        if (!app.settings.freqProtect) return emptySet()
-        val now = System.currentTimeMillis()
-        return recentFg.filterValues { now - it < 10 * 60_000L }.keys.toHashSet()
-    }
-
     private suspend fun scanOnce(eventDriven: Boolean) {
         val pm = app.getSystemService(PowerManager::class.java)
         val lock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "proc:scan")
@@ -231,16 +222,14 @@ class GuardEngine(private val app: ProcApp) {
                 if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
                 else bgSince.putIfAbsent(p.packageName, now)
             }
-            val recent = recentlyUsed()
             val (bLow, tHigh) = batteryState()
             val ctx = RuleContext(snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
                 perApp = { app.settings.getPerApp(it) },
                 monitorAll = app.settings.monitorMode == "all",
-                freqProtected = recent,
                 memPressure = memPressureOf(snap.mem),
                 batteryLow = bLow, tempHigh = tHigh)
             val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
-            val killed = execute(candidates, fg, now, recent)
+            val killed = execute(candidates, fg, now)
             if (killed == 0 && eventDriven && now - lastEventLog > 8_000L) {
                 lastEventLog = now
                 EventLog.add(LogType.SCAN, "事件触发扫描", "前台切换 · 待机省电")
@@ -254,13 +243,13 @@ class GuardEngine(private val app: ProcApp) {
         }
     }
 
-    private suspend fun execute(candidates: List<KillCandidate>, fg: String?, now: Long, recent: Set<String> = emptySet()): Int {
+    private suspend fun execute(candidates: List<KillCandidate>, fg: String?, now: Long): Int {
         if (candidates.isEmpty()) return 0
         val chosen = LinkedHashMap<String, KillCandidate>()
         val cooldownMs = app.settings.cooldownSec * 1000L
         for (c in candidates) {
             if (c.pkg == fg) continue
-            if (c.pkg in protected || app.settings.isWhitelisted(c.pkg) || c.pkg in recent) continue
+            if (c.pkg in protected || app.settings.isWhitelisted(c.pkg)) continue
             if (!autoKillable(c.pkg)) continue
             val lk = lastKilled[c.pkg]
             if (lk != null && now - lk < cooldownMs) continue
@@ -305,13 +294,11 @@ class GuardEngine(private val app: ProcApp) {
             if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
             else bgSince.putIfAbsent(p.packageName, now)
         }
-        val recent = recentlyUsed()
         val (bLow, tHigh) = batteryState()
         val ctx = RuleContext(
             snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
             perApp = { app.settings.getPerApp(it) },
             monitorAll = app.settings.monitorMode == "all",
-            freqProtected = recent,
             memPressure = memPressureOf(snap.mem),
             batteryLow = bLow, tempHigh = tHigh
         )
@@ -319,7 +306,7 @@ class GuardEngine(private val app: ProcApp) {
         val cooldownMs = app.settings.cooldownSec * 1000L
         val hits = candidates
             .filter { c ->
-                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) && c.pkg !in recent &&
+                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) &&
                     autoKillable(c.pkg) &&
                     (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
             }
@@ -349,13 +336,11 @@ class GuardEngine(private val app: ProcApp) {
             if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
             else bgSince.putIfAbsent(p.packageName, now)
         }
-        val recent = recentlyUsed()
         val (bLow, tHigh) = batteryState()
         val ctx = RuleContext(
             snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
             perApp = { app.settings.getPerApp(it) },
             monitorAll = app.settings.monitorMode == "all",
-            freqProtected = recent,
             memPressure = memPressureOf(snap.mem),
             batteryLow = bLow, tempHigh = tHigh
         )
@@ -363,7 +348,7 @@ class GuardEngine(private val app: ProcApp) {
         val cooldownMs = app.settings.cooldownSec * 1000L
         return candidates
             .filter { c ->
-                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) && c.pkg !in recent &&
+                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) &&
                     autoKillable(c.pkg) &&
                     (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
             }
@@ -400,12 +385,10 @@ class GuardEngine(private val app: ProcApp) {
             val snap = app.repo.snapshot()
             val now = System.currentTimeMillis()
             val fg = EventHub.foregroundPackage.value
-            val recent = recentlyUsed()
             val chosen = snap.processes.filter {
                 it.user.startsWith("u0_") && it.packageName.isNotBlank() &&
                     !it.isForeground && it.packageName != fg &&
                     it.packageName !in protected && !app.settings.isWhitelisted(it.packageName) &&
-                    it.packageName !in recent &&
                     autoKillable(it.packageName)
             }
             if (chosen.isEmpty()) return 0 to 0L

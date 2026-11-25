@@ -65,8 +65,6 @@ fun RulesScreen(ui: AppUi) {
             SwitchRow("clock", "后台超时清理", "后台停留超过「后台占用时长」后终止", ui.cfg.bgStop) { v -> ui.setCfg { it.copy(bgStop = v) } }
             Divider()
             SwitchRow("lock", "关联唤醒拦截", "清理后短时间内被重新拉起（关联唤醒）则再次终止", ui.cfg.wakeBlock) { v -> ui.setCfg { it.copy(wakeBlock = v) } }
-            Divider()
-            SwitchRow("star", "常用应用保护", "最近 10 分钟内使用过的应用不自动清理，避免误杀", ui.cfg.freqProtect) { v -> ui.setCfg { it.copy(freqProtect = v) } }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -98,8 +96,8 @@ fun RulesScreen(ui: AppUi) {
         // 执行控制
         GroupCard {
             GroupLabel("执行控制")
-            SliderRow("后台缓冲时间", ui.cfg.buffer, 0, 30, "分钟") { ui.setCfg { c -> c.copy(buffer = it) } }
-            Text("进入后台超过该时长才按「内存/CPU 阈值」清理；回到前台立即刷新计时，避免误杀临时切后台的应用。",
+            SliderRow("常用应用保护时间", ui.cfg.buffer, 0, 30, "分钟") { ui.setCfg { c -> c.copy(buffer = it) } }
+            Text("应用进入后台超过该时长才按「内存/CPU 阈值」清理（即该时长内视为“常用应用”受保护，不清理）；回到前台立即刷新计时。",
                 color = C.muted, fontSize = 10.5.sp,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 10.dp, bottom = 12.dp),
                 lineHeight = 15.sp)

@@ -59,6 +59,7 @@ import com.w2018.procmanager.ui.components.rememberToastState
 import com.w2018.procmanager.ui.screens.AppDetailSheet
 import com.w2018.procmanager.ui.screens.AppsScreen
 import com.w2018.procmanager.ui.screens.DashScreen
+import com.w2018.procmanager.ui.screens.DeviceInfoScreen
 import com.w2018.procmanager.ui.screens.LogsScreen
 import com.w2018.procmanager.ui.screens.RankScreen
 import com.w2018.procmanager.ui.screens.RulesScreen
@@ -92,6 +93,7 @@ fun AppRoot() {
     var sheetPkg by remember { mutableStateOf<String?>(null) }
     var logFilterReq by remember { mutableStateOf<String?>(null) }
     var showLogs by remember { mutableStateOf(false) }
+    var showDevice by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -133,6 +135,7 @@ fun AppRoot() {
         when {
             scanning -> scanning = false
             showLogs -> showLogs = false
+            showDevice -> showDevice = false
             sheetPkg != null -> sheetPkg = null
             tab != Tab.DASH -> tab = Tab.DASH
             else -> activity?.finish()
@@ -152,7 +155,7 @@ fun AppRoot() {
                             ) { t ->
                                 tabStateHolder.SaveableStateProvider(t.name) {
                                     when (t) {
-                                        Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true })
+                                        Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true }, onOpenDevice = { showDevice = true })
                                         Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
                                         Tab.RULES -> RulesScreen(ui)
                                         Tab.RANK -> RankScreen(ui) { sheetPkg = it }
@@ -164,7 +167,17 @@ fun AppRoot() {
                         ProcTabBar(current = tab, onSelect = { tab = it })
                     }
                     // 事件日志（全屏覆盖，由首页「最近事件-全部」或事件项进入）
-                    if (showLogs) LogsScreen(ui, logFilterReq, onClose = { showLogs = false }) { logFilterReq = null }
+                    if (showLogs) {
+                        Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding().navigationBarsPadding()) {
+                            LogsScreen(ui, logFilterReq, onClose = { showLogs = false }) { logFilterReq = null }
+                        }
+                    }
+                    // 设备信息（全屏覆盖，由首页「实时指标-更多」进入）
+                    if (showDevice) {
+                        Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding().navigationBarsPadding()) {
+                            DeviceInfoScreen(ui) { showDevice = false }
+                        }
+                    }
                     // 应用详情底部弹层（覆盖整个界面，包括底部导航）
                     sheetPkg?.let { AppDetailSheet(ui, it) { sheetPkg = null } }
                     // 扫描过程全屏界面（覆盖包括底部导航）

@@ -73,7 +73,7 @@ import com.w2018.procmanager.ui.theme.C
 import kotlinx.coroutines.launch
 
 @Composable
-fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) -> Unit = {}, onOpenScan: () -> Unit = {}) {
+fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) -> Unit = {}, onOpenScan: () -> Unit = {}, onOpenDevice: () -> Unit = {}) {
     val toast = LocalToast.current
     val confirm = LocalConfirm.current
     val scope = rememberCoroutineScope()
@@ -220,8 +220,8 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("实时指标", action = {
-            Row(Modifier.clickable { onOpenSettings() }, verticalAlignment = Alignment.CenterVertically) {
-                Text("省电策略", color = C.accent, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.clickable { onOpenDevice() }, verticalAlignment = Alignment.CenterVertically) {
+                Text("更多", color = C.accent, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 Ic("chevron", 14, C.accent)
             }
         })
