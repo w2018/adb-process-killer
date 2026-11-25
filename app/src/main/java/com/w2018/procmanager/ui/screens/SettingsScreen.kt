@@ -250,7 +250,7 @@ fun SettingsScreen(ui: AppUi) {
             SetDivider()
             RowItem("power", "自启动治理", "开机自启应用，可冻结不常用项", "") { showAutoStart = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.1.5 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.1.6 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -358,6 +358,8 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
                             Text(a.label, color = C.text, fontSize = 13.sp, maxLines = 1)
                             Text("${a.packageName} · ${mem}MB", color = C.muted, fontSize = 9.5.sp, maxLines = 1)
                         }
+                        TagC(if (frozen) "已冻结" else "未冻结", if (frozen) C.warn else C.muted)
+                        Spacer(Modifier.width(8.dp))
                         MiniAction(if (frozen) "恢复" else "冻结") {
                             scope.launch { ui.freezeApp(a.packageName, !frozen) }
                         }
@@ -384,7 +386,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.1.5", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.1.6", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",
