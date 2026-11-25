@@ -82,7 +82,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
     val memPct = mem?.percent ?: 0f
     val bgProcs = snap?.processes?.count { it.user.startsWith("u0_") && !it.isForeground } ?: 0
     val cpuPct = snap?.cpu?.usedPercent ?: 0f
-    val monCount = ui.monitored.size
+    val monCount = if (ui.cfg.monitorMode == "all") "全部" else "${ui.monitored.size}"
 
     Column(
         Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 16.dp),
@@ -161,16 +161,17 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
         ) {
             Column {
                 Text("今日守护报告", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                val managed = if (ui.cfg.monitorMode == "all") (snap?.apps?.count { !it.isSystem } ?: ui.monitored.size) else ui.monitored.size
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
-                    Text("${ui.blocked}", color = C.text, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
-                    Text(" 次清理", color = C.text2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                    Text("$managed", color = C.text, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(" 个应用受管", color = C.text2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(bottom = 6.dp))
                 }
-                Text("已自动清理后台进程并释放内存", color = C.text2, fontSize = 11.5.sp)
+                Text("今日已自动清理 ${ui.blocked} 个应用 · 约释放 ${ui.freedKb / 1024} MB", color = C.text2, fontSize = 11.5.sp)
                 Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    HeroStat("${ui.blocked}", "次", "今日清理次数", C.warn)
-                    HeroStat("${ui.freedKb / 1024}", "MB", "释放内存", C.accent)
-                    HeroStat("$monCount", "", "监控应用", C.blue)
+                    HeroStat("${ui.blocked}", "个", "今日清理应用", C.warn)
+                    HeroStat("约 ${ui.freedKb / 1024}", "MB", "释放内存(估算)", C.accent)
+                    HeroStat("$monCount", "", "监控范围", C.blue)
                     HeroStat("${snap?.processes?.size ?: 0}", "", "进程总数", C.text)
                 }
             }
@@ -212,7 +213,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
         })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.weight(1f)) { MetricCard("memory", "可用内存", String.format("%.1f", availGb), "GB", "系统 MemAvailable", false) }
-            Box(Modifier.weight(1f)) { MetricCard("cpu", "CPU 占用", String.format("%.1f", cpuPct), "%", "近 5 分钟均值", false) }
+            Box(Modifier.weight(1f)) { MetricCard("cpu", "CPU 占用", String.format("%.1f", cpuPct), "%", "实时采样", false) }
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -222,7 +223,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("内存占用趋势", action = {
-            Text("近 1 小时", color = C.muted, fontSize = 11.sp)
+            Text("最近 12 次采样", color = C.muted, fontSize = 11.sp)
         })
         MemoryChart(memPct, ui.memHistory)
         Spacer(Modifier.height(16.dp))
@@ -447,8 +448,8 @@ private fun MemoryChart(percent: Float, history: List<Float>) {
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("60min前", color = C.muted, fontSize = 9.5.sp)
-            Text("30min前", color = C.muted, fontSize = 9.5.sp)
+            Text("约24秒前", color = C.muted, fontSize = 9.5.sp)
+            Text("", color = C.muted, fontSize = 9.5.sp)
             Text("现在", color = C.muted, fontSize = 9.5.sp)
         }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {

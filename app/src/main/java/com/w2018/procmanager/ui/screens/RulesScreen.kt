@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.w2018.procmanager.ui.AppUi
 import com.w2018.procmanager.ui.components.BtnKind
+import com.w2018.procmanager.ui.components.LocalConfirm
 import com.w2018.procmanager.ui.components.LocalToast
 import com.w2018.procmanager.ui.components.ProcButton
 import com.w2018.procmanager.ui.components.SegControl
@@ -34,6 +35,7 @@ import com.w2018.procmanager.ui.theme.C
 @Composable
 fun RulesScreen(ui: AppUi) {
     val toast = LocalToast.current
+    val confirm = LocalConfirm.current
     val scroll = rememberScrollState()
 
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
@@ -55,14 +57,14 @@ fun RulesScreen(ui: AppUi) {
 
         // 立即停止规则
         GroupCard {
-            GroupLabel("立即停止规则")
-            SwitchRow("shield", "标记存活立即停止", "被手动标记的应用再次复活时立即终止", ui.cfg.aliveStop) { v -> ui.setCfg { it.copy(aliveStop = v) } }
+            GroupLabel("清理规则")
+            SwitchRow("cpu", "内存/CPU 超限清理", "后台应用内存或 CPU 超过上方阈值时自动终止", ui.cfg.aliveStop) { v -> ui.setCfg { it.copy(aliveStop = v) } }
             Divider()
-            SwitchRow("zap", "后台运行立即停止", "应用切入后台即终止（激进，谨慎开启）", ui.cfg.bgStop) { v -> ui.setCfg { it.copy(bgStop = v) } }
+            SwitchRow("clock", "后台超时清理", "后台停留超过「后台占用时长」后终止", ui.cfg.bgStop) { v -> ui.setCfg { it.copy(bgStop = v) } }
             Divider()
-            SwitchRow("lock", "关联唤醒拦截", "拦截应用间相互拉起与链式唤醒", ui.cfg.wakeBlock) { v -> ui.setCfg { it.copy(wakeBlock = v) } }
+            SwitchRow("lock", "关联唤醒拦截", "清理后短时间内被重新拉起（关联唤醒）则再次终止", ui.cfg.wakeBlock) { v -> ui.setCfg { it.copy(wakeBlock = v) } }
             Divider()
-            SwitchRow("star", "常用应用保护", "高频使用应用豁免，避免误杀", ui.cfg.freqProtect) { v -> ui.setCfg { it.copy(freqProtect = v) } }
+            SwitchRow("star", "常用应用保护", "最近 10 分钟内使用过的应用不自动清理，避免误杀", ui.cfg.freqProtect) { v -> ui.setCfg { it.copy(freqProtect = v) } }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -83,8 +85,11 @@ fun RulesScreen(ui: AppUi) {
         }
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ProcButton("恢复默认", onClick = { ui.resetRules(); toast.show("已恢复默认规则") },
-                kind = BtnKind.Ghost, modifier = Modifier.weight(1f))
+            ProcButton("恢复默认", onClick = {
+                confirm.show("恢复默认规则?", "将把内存/后台/CPU 阈值与冷却重置为默认值，此操作不可撤销。") {
+                    ui.resetRules(); toast.show("已恢复默认规则")
+                }
+            }, kind = BtnKind.Ghost, modifier = Modifier.weight(1f))
             ProcButton("保存规则", onClick = { toast.show("规则已保存") },
                 kind = BtnKind.Primary, modifier = Modifier.weight(1f), leading = { com.w2018.procmanager.ui.components.Ic("check", 16, C.onAccent) })
         }

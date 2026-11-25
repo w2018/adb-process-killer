@@ -93,6 +93,22 @@ class SettingsStore(context: Context) {
         get() = sp.getStringSet("monitored", emptySet()) ?: emptySet()
         set(v) = sp.edit { putStringSet("monitored", v) }
 
+    /** 监控范围：all=全部用户应用（默认，开箱即用）；selected=仅勾选的应用 */
+    var monitorMode: String
+        get() = sp.getString("cfg_monitorMode", "all") ?: "all"
+        set(v) = sp.edit { putString("cfg_monitorMode", v) }
+
+    /** 本应用主动冻结（pm disable-user）的包，用于与用户原有停用区分 */
+    var frozenPkgs: Set<String>
+        get() = sp.getStringSet("frozenPkgs", emptySet()) ?: emptySet()
+        set(v) = sp.edit { putStringSet("frozenPkgs", v) }
+
+    fun setFrozen(pkg: String, frozen: Boolean) {
+        val s = frozenPkgs.toMutableSet()
+        if (frozen) s.add(pkg) else s.remove(pkg)
+        frozenPkgs = s
+    }
+
     // ---- 单应用「后台即停」覆盖 ----
     var bgStopPkgs: Set<String>
         get() = sp.getStringSet("bgStopPkgs", emptySet()) ?: emptySet()

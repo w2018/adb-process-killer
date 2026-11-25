@@ -86,7 +86,8 @@ class CpuRule : Rule {
 class WakeBlockRule : Rule {
     override val id = "wake"
     override val name = "关联唤醒"
-    override fun enabled(s: SettingsStore) = s.wakeBlock && s.freqProtect
+    // 仅由「关联唤醒拦截」开关控制；「常用应用保护」单独在 RuleContext 里作为保护生效。
+    override fun enabled(s: SettingsStore) = s.wakeBlock
     override fun evaluate(ctx: RuleContext): List<KillCandidate> {
         val windowMs = 120_000L
         val out = ArrayList<KillCandidate>()

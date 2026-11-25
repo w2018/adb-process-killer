@@ -92,6 +92,15 @@ fun AppRoot() {
         ui.ensureShizuku()
         ui.autoConnect()
         ui.refresh()
+        // Android 13+ 运行时申请通知权限（前台保活通知与清理提醒依赖它）
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val perm = android.Manifest.permission.POST_NOTIFICATIONS
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, perm)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                activity?.let { androidx.core.app.ActivityCompat.requestPermissions(it, arrayOf(perm), 101) }
+            }
+        }
     }
     // 通道动作结果 → 自绘 Toast
     LaunchedEffect(ui.message) {

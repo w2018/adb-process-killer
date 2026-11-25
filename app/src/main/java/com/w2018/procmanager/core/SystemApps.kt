@@ -15,17 +15,33 @@ object SystemApps {
         "com.android.launcher3",
         "com.android.launcher",
         "com.google.android.gms",
+        "com.google.android.gsf",
         "com.android.permissioncontroller",
         "com.android.packageinstaller",
         "com.android.shell",
         "com.android.providers.settings",
         "com.android.providers.media",
         "com.android.server.telecom",
+        "com.android.telecom",
+        "com.android.bluetooth",
+        "com.android.nfc",
+        "com.android.keychain",
         "com.android.inputmethod.latin",
+        "com.google.android.inputmethod.latin",
+        "com.android.cellbroadcastreceiver",
+        "com.android.mms",
     )
 
     fun isCritical(pkg: String): Boolean =
         pkg in critical || pkg == "android" || pkg.startsWith("com.android.providers")
+
+    /** 风险等级：0=低（用户应用）；1=高（系统/谷歌框架组件，需强确认）；2=禁止（关键系统，禁止冻结）。 */
+    fun riskLevel(pkg: String): Int = when {
+        isCritical(pkg) -> 2
+        pkg.startsWith("com.android.") || pkg.startsWith("com.google.") ||
+            pkg.startsWith("com.qualcomm.") || pkg.startsWith("com.mediatek.") -> 1
+        else -> 0
+    }
 
     private val purpose = mapOf(
         "com.android.systemui" to "系统界面：状态栏、通知栏、导航键、锁屏",

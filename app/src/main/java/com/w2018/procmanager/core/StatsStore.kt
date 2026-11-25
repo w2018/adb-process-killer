@@ -21,6 +21,7 @@ class StatsStore(context: Context) {
             sp.edit {
                 putString("day", today())
                 putInt("blocked", 0)
+                putInt("batches", 0)
                 putLong("freed", 0L)
                 putInt("scans", 0)
             }
@@ -29,9 +30,15 @@ class StatsStore(context: Context) {
 
     val day: String get() { ensureDay(); return today() }
 
+    /** 今日已清理的应用数量（口径=被终止的应用个数，而非批次）。 */
     var blocked: Int
         get() { ensureDay(); return sp.getInt("blocked", 0) }
         private set(v) { sp.edit { putInt("blocked", v) } }
+
+    /** 今日触发的清理批次数量。 */
+    var batches: Int
+        get() { ensureDay(); return sp.getInt("batches", 0) }
+        private set(v) { sp.edit { putInt("batches", v) } }
 
     var freedKb: Long
         get() { ensureDay(); return sp.getLong("freed", 0L) }
@@ -41,9 +48,11 @@ class StatsStore(context: Context) {
         get() { ensureDay(); return sp.getInt("scans", 0) }
         private set(v) { sp.edit { putInt("scans", v) } }
 
-    fun addBlocked(freed: Long) {
+    /** 记录一次清理：appCount=本次终止的应用数，freed=估算释放内存。 */
+    fun addBlocked(appCount: Int, freed: Long) {
         ensureDay()
-        blocked = blocked + 1
+        if (appCount > 0) blocked = blocked + appCount
+        batches = batches + 1
         if (freed > 0) freedKb = freedKb + freed
     }
 
@@ -56,6 +65,7 @@ class StatsStore(context: Context) {
         sp.edit {
             putString("day", today())
             putInt("blocked", 0)
+            putInt("batches", 0)
             putLong("freed", 0L)
             putInt("scans", 0)
         }

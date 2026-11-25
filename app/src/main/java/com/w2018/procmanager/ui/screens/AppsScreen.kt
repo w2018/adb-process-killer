@@ -105,7 +105,7 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         when (filter) {
             "sys" -> a.isSystem
             "user" -> !a.isSystem
-            "mon" -> ui.monitored.contains(a.packageName)
+            "mon" -> if (ui.cfg.monitorMode == "all") !a.isSystem else ui.monitored.contains(a.packageName)
             "run" -> agg.containsKey(a.packageName)
             "frozen" -> ui.isFrozen(a.packageName)
             "auto" -> a.autoStart
@@ -158,7 +158,7 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             Chip("全部", filter == "all") { filter = "all" }
             Chip("用户应用", filter == "user") { filter = "user" }
             Chip("系统应用", filter == "sys") { filter = "sys" }
-            Chip("已监控 ${ui.monitored.size}", filter == "mon") { filter = "mon" }
+            Chip("已监控 ${if (ui.cfg.monitorMode == "all") apps.count { !it.isSystem } else ui.monitored.size}", filter == "mon") { filter = "mon" }
             Chip("运行中", filter == "run") { filter = "run" }
             Chip("已冻结", filter == "frozen") { filter = "frozen" }
             Chip("自启动", filter == "auto") { filter = "auto" }
@@ -207,7 +207,7 @@ private fun AppRow(ui: AppUi, a: AppInfo, p: ProcAgg?, onOpen: (String) -> Unit)
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.width(6.dp))
                 TagC(if (a.isSystem) "系统" else "用户", if (a.isSystem) C.purple else C.blue)
-                if (monitored) { Spacer(Modifier.width(4.dp)); TagC("监控中", C.accent) }
+                if (ui.cfg.monitorMode == "selected" && monitored) { Spacer(Modifier.width(4.dp)); TagC("监控中", C.accent) }
                 if (frozen) { Spacer(Modifier.width(4.dp)); TagC("已冻结", C.warn) }
             }
             Text(a.packageName, color = C.muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -227,7 +227,7 @@ private fun AppRow(ui: AppUi, a: AppInfo, p: ProcAgg?, onOpen: (String) -> Unit)
                 }
             }
         }
-        MiniButton(monitored) { ui.toggleMonitor(a.packageName) }
+        if (ui.cfg.monitorMode == "selected") MiniButton(monitored) { ui.toggleMonitor(a.packageName) }
     }
 }
 
@@ -280,7 +280,7 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                         Text(a.label, color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.width(6.dp))
                         TagC(if (a.isSystem) "系统应用" else "用户应用", if (a.isSystem) C.purple else C.blue)
-                        if (monitored) { Spacer(Modifier.width(4.dp)); TagC("监控中", C.accent) }
+                        if (ui.cfg.monitorMode == "selected" && monitored) { Spacer(Modifier.width(4.dp)); TagC("监控中", C.accent) }
                     }
                     Text(a.packageName, color = C.muted, fontSize = 11.sp)
                 }
@@ -323,6 +323,7 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
 
             Spacer(Modifier.height(14.dp))
             // 监控
+            val monitorAll = ui.cfg.monitorMode == "all"
             Row(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(C.card).padding(14.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -332,10 +333,12 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("加入监控列表", color = C.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("加入后按全局规则自动管理", color = C.text2, fontSize = 10.5.sp)
+                    Text(if (monitorAll) "全量监控中" else "加入监控列表", color = C.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (monitorAll) "当前管理所有用户应用，可在设置切换为「仅勾选」"
+                        else "加入后按全局规则自动管理", color = C.text2, fontSize = 10.5.sp)
                 }
-                ProcSwitch(monitored) { ui.toggleMonitor(pkg) }
+                if (!monitorAll) ProcSwitch(monitored) { ui.toggleMonitor(pkg) }
             }
             // 单应用 后台即停
             Row(
@@ -386,8 +389,14 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                     text = if (frozen) "恢复应用" else "冻结/停用",
                     onClick = {
                         if (critical) { toast.show("系统关键应用，已禁止冻结"); return@ProcButton }
+                        val risk = SystemApps.riskLevel(pkg)
+                        val warn = when {
+                            risk >= 2 -> "【禁止】关键系统应用，已禁止冻结。\n"
+                            risk == 1 -> "【高风险】该应用为系统/框架组件，停用可能影响推送、同步、硬件或通话等功能，请确认后继续。\n"
+                            else -> ""
+                        }
                         confirm.show(if (frozen) "恢复应用?" else "冻结应用?",
-                            "通过 pm ${if (frozen) "enable" else "disable-user --user 0"} 执行。\n" + SystemApps.riskOf(pkg)) {
+                            warn + "通过 pm ${if (frozen) "enable" else "disable-user --user 0"} 执行。\n" + SystemApps.riskOf(pkg)) {
                             scope.launch {
                                 val ok = ui.freezeApp(pkg, !frozen)
                                 toast.show(if (ok) (if (frozen) "已恢复 " else "已冻结 ") + a.label else "操作失败，请检查权限通道")

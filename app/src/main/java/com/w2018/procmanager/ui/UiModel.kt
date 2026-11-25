@@ -38,6 +38,7 @@ data class Cfg(
     val scan: Int,
     val adbFreq: Int,
     val preset: String,
+    val monitorMode: String,
 ) {
     companion object {
         fun from(s: SettingsStore) = Cfg(
@@ -45,7 +46,7 @@ data class Cfg(
             s.aliveStop, s.bgStop, s.wakeBlock, s.freqProtect,
             s.lockLowPower, s.screenOffSave, s.chargeExempt, s.nightMode,
             s.memThreshold, s.bgMinutes, s.cpuThreshold, s.cooldownSec,
-            s.scanInterval, s.adbFreqLimit, s.preset,
+            s.scanInterval, s.adbFreqLimit, s.preset, s.monitorMode,
         )
 
         fun write(s: SettingsStore, c: Cfg) {
@@ -58,7 +59,7 @@ data class Cfg(
             s.memThreshold = c.mem; s.bgMinutes = c.bgTime
             s.cpuThreshold = c.cpu; s.cooldownSec = c.cooldown
             s.scanInterval = c.scan; s.adbFreqLimit = c.adbFreq
-            s.preset = c.preset
+            s.preset = c.preset; s.monitorMode = c.monitorMode
         }
     }
 }
@@ -86,7 +87,7 @@ class AppUi(val app: ProcApp) {
     var monitored by mutableStateOf(app.settings.monitored); private set
     var whitelist by mutableStateOf(app.settings.whitelist); private set
     var bgStopSet by mutableStateOf(app.settings.bgStopPkgs); private set
-    var frozen by mutableStateOf<Set<String>>(emptySet()); private set
+    var frozen by mutableStateOf<Set<String>>(app.settings.frozenPkgs); private set
     var logs by mutableStateOf<List<LogEvent>>(emptyList()); private set
     var blocked by mutableStateOf(0); private set
     var freedKb by mutableStateOf(0L); private set
@@ -116,7 +117,7 @@ class AppUi(val app: ProcApp) {
         refreshing = true
         try {
             snapshot = app.repo.snapshot()
-            if (channelReady) frozen = app.repo.disabledPackages()
+            frozen = app.settings.frozenPkgs
         } catch (_: Throwable) {}
         shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
         monitored = app.settings.monitored
@@ -126,12 +127,6 @@ class AppUi(val app: ProcApp) {
         val pct = snapshot?.mem?.percent ?: 0f
         if (pct > 0f) {
             memHistory = (memHistory + pct).takeLast(12)
-        }
-        // 若 Shizuku 已就绪（用户刚授权），自动接管通道，避免停留在“未连接”
-        if (!channelReady && runCatching { app.channels.shizukuReady() }.getOrDefault(false)) {
-            channelReady = true; channelType = "shizuku"
-            channelLabel = "Shizuku"; channelDetail = "已通过 Shizuku 获得 shell 权限"
-            runCatching { frozen = app.repo.disabledPackages() }
         }
         refreshing = false
     }
@@ -169,6 +164,8 @@ class AppUi(val app: ProcApp) {
     }
 
     fun setScan(sec: Int) = setCfg { it.copy(scan = sec) }
+
+    fun setMonitorMode(mode: String) = setCfg { it.copy(monitorMode = mode) }
 
     fun setGuardian(v: Boolean) {
         setCfg { it.copy(guardian = v, watchdog = v) }
@@ -250,7 +247,8 @@ class AppUi(val app: ProcApp) {
         val r = app.channels.run(if (freeze) "pm disable-user --user 0 $pkg" else "pm enable $pkg")
         val ok = r.ok
         if (ok) {
-            frozen = if (freeze) frozen + pkg else frozen - pkg
+            app.settings.setFrozen(pkg, freeze)
+            frozen = app.settings.frozenPkgs
             EventLog.add(com.w2018.procmanager.core.LogType.RULE, (if (freeze) "冻结 " else "恢复 ") + pkg,
                 if (freeze) "pm disable-user" else "pm enable")
         }

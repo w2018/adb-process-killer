@@ -2,6 +2,8 @@ package com.w2018.procmanager.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,7 +51,7 @@ fun LogsScreen(ui: AppUi) {
         Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("事件日志", color = C.text, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
-                Text("共 ${ui.logs.size} 条记录 · 仅保留最近 200 条", color = C.text2, fontSize = 11.sp)
+                Text("共 ${ui.logs.size} 条记录 · 本次运行内记录，最多 200 条", color = C.text2, fontSize = 11.sp)
             }
             IconBtn("trash") {
                 confirm.show("清空日志?", "将删除当前所有事件记录。") {
@@ -58,10 +60,12 @@ fun LogsScreen(ui: AppUi) {
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
             Chip("全部", filter == "all") { filter = "all" }
             Chip("清理", filter == "kill") { filter = "kill" }
             Chip("规则", filter == "rule") { filter = "rule" }
+            Chip("扫描", filter == "scan") { filter = "scan" }
             Chip("通道", filter == "channel") { filter = "channel" }
             Chip("系统", filter == "system") { filter = "system" }
         }

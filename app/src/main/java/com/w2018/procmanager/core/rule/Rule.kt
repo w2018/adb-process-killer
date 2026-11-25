@@ -21,15 +21,19 @@ class RuleContext(
     val lastKilled: Map<String, Long>,
     val now: Long,
     val protectedPkgs: Set<String>,
-    /** 用户勾选的监控名单；为空时视为“全部用户应用”（开箱即用）。 */
+    /** 用户勾选的监控名单（仅在 monitorAll=false 时生效）。 */
     val monitored: Set<String> = emptySet(),
     /** 单应用独立规则解析（0/未启用时回退全局）。 */
-    val perApp: (String) -> SettingsStore.PerAppCfg = { SettingsStore.PerAppCfg() }
+    val perApp: (String) -> SettingsStore.PerAppCfg = { SettingsStore.PerAppCfg() },
+    /** 监控范围：true=全部用户应用（默认）；false=仅 monitored 列表。 */
+    val monitorAll: Boolean = true,
+    /** 「常用应用保护」命中的包（最近使用过），视为受保护不自动清理。 */
+    val freqProtected: Set<String> = emptySet()
 ) {
     fun isProtected(pkg: String): Boolean =
-        protectedPkgs.contains(pkg) || settings.isWhitelisted(pkg)
+        protectedPkgs.contains(pkg) || settings.isWhitelisted(pkg) || freqProtected.contains(pkg)
 
-    fun isMonitored(pkg: String): Boolean = monitored.isEmpty() || monitored.contains(pkg)
+    fun isMonitored(pkg: String): Boolean = monitorAll || monitored.contains(pkg)
 
     fun isBgStopForced(pkg: String): Boolean = settings.bgStopPkgs.contains(pkg)
 

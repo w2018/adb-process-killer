@@ -78,8 +78,21 @@ fun SettingsScreen(ui: AppUi) {
                 ui.setCfg { it.copy(autoStart = v) }
             }
             SetDivider()
-            SwitchRow("bell", "状态通知", "执行清理/冻结后显示通知", ui.cfg.notify) { v ->
+            SwitchRow("bell", "状态通知", "清理/冻结事件提醒；常驻通知用于前台保活，不可关闭", ui.cfg.notify) { v ->
                 ui.setCfg { it.copy(notify = v) }
+            }
+        }
+
+        // ---------------- 监控范围 ----------------
+        SetGroupLabel("监控范围")
+        SetGroupCard {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp)) {
+                Text("监控哪些应用", color = C.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("全部用户应用=默认管理所有用户应用；仅勾选=只管理应用详情中手动加入的应用",
+                    color = C.text2, fontSize = 10.5.sp, modifier = Modifier.padding(top = 1.dp, bottom = 8.dp))
+                SegControl(listOf("全部用户应用", "仅勾选"), if (ui.cfg.monitorMode == "all") 0 else 1) { i ->
+                    ui.setMonitorMode(if (i == 0) "all" else "selected")
+                }
             }
         }
 
@@ -94,7 +107,7 @@ fun SettingsScreen(ui: AppUi) {
                 SegControl(opts, vals.indexOf(ui.cfg.scan).coerceAtLeast(0)) { i -> ui.setScan(vals[i]) }
             }
             SetDivider()
-            SliderRow("ADB 调用频率上限", ui.cfg.adbFreq, 5, 60, "次/分") { v -> ui.setCfg { it.copy(adbFreq = v) } }
+            SliderRow("扫描频率上限", ui.cfg.adbFreq, 5, 60, "次/分") { v -> ui.setCfg { it.copy(adbFreq = v) } }
             SetDivider()
             SwitchRow("lock", "CPU 锁按需持有", "仅扫描瞬间短时持锁并超时释放", ui.cfg.lockLowPower) { v -> ui.setCfg { it.copy(lockLowPower = v) } }
             SetDivider()
@@ -232,7 +245,7 @@ fun SettingsScreen(ui: AppUi) {
         SetGroupCard {
             RowItem("star", "白名单管理", "永不清理的应用", "${ui.whitelist.size} 个") { showWhite = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.1.1 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.1.2 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -323,7 +336,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.1.1", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.1.2", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",

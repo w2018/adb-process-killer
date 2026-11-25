@@ -46,6 +46,8 @@ class GuardEngine(private val app: ProcApp) {
         PerAppRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule()
     )
     private val scanTimes = ArrayDeque<Long>()
+    /** 最近使用（前台出现过）的应用及时间戳，用于「常用应用保护」。 */
+    private val recentFg = HashMap<String, Long>()
 
     private var protected: Set<String> = emptySet()
     private var lastSkipLog = 0L
@@ -59,7 +61,10 @@ class GuardEngine(private val app: ProcApp) {
         // 事件驱动：前台应用变化即触发扫描
         scope.launch {
             EventHub.foregroundPackage.collect { pkg ->
-                if (!pkg.isNullOrBlank()) kick.trySend(Unit)
+                if (!pkg.isNullOrBlank()) {
+                    recentFg[pkg] = System.currentTimeMillis()
+                    kick.trySend(Unit)
+                }
             }
         }
         job = scope.launch { loop() }
@@ -146,6 +151,13 @@ class GuardEngine(private val app: ProcApp) {
         return true
     }
 
+    /** 「常用应用保护」：最近 10 分钟内使用过的应用集合（未开启则返回空）。 */
+    private fun recentlyUsed(): Set<String> {
+        if (!app.settings.freqProtect) return emptySet()
+        val now = System.currentTimeMillis()
+        return recentFg.filterValues { now - it < 10 * 60_000L }.keys.toHashSet()
+    }
+
     private suspend fun scanOnce(eventDriven: Boolean) {
         val pm = app.getSystemService(PowerManager::class.java)
         val lock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "proc:scan")
@@ -162,10 +174,13 @@ class GuardEngine(private val app: ProcApp) {
                 if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
                 else bgSince.putIfAbsent(p.packageName, now)
             }
+            val recent = recentlyUsed()
             val ctx = RuleContext(snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
-                perApp = { app.settings.getPerApp(it) })
+                perApp = { app.settings.getPerApp(it) },
+                monitorAll = app.settings.monitorMode == "all",
+                freqProtected = recent)
             val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
-            val killed = execute(candidates, fg, now)
+            val killed = execute(candidates, fg, now, recent)
             if (killed == 0 && eventDriven && now - lastEventLog > 8_000L) {
                 lastEventLog = now
                 EventLog.add(LogType.SCAN, "事件触发扫描", "前台切换 · 待机省电")
@@ -179,13 +194,13 @@ class GuardEngine(private val app: ProcApp) {
         }
     }
 
-    private suspend fun execute(candidates: List<KillCandidate>, fg: String?, now: Long): Int {
+    private suspend fun execute(candidates: List<KillCandidate>, fg: String?, now: Long, recent: Set<String> = emptySet()): Int {
         if (candidates.isEmpty()) return 0
         val chosen = LinkedHashMap<String, KillCandidate>()
         val cooldownMs = app.settings.cooldownSec * 1000L
         for (c in candidates) {
             if (c.pkg == fg) continue
-            if (c.pkg in protected || app.settings.isWhitelisted(c.pkg)) continue
+            if (c.pkg in protected || app.settings.isWhitelisted(c.pkg) || c.pkg in recent) continue
             if (!autoKillable(c.pkg)) continue
             val lk = lastKilled[c.pkg]
             if (lk != null && now - lk < cooldownMs) continue
@@ -202,11 +217,11 @@ class GuardEngine(private val app: ProcApp) {
                 EventLog.add(
                     LogType.KILL,
                     "已清理 ${label(pkg)}",
-                    "${c.reason} · 释放 ${c.freedKb / 1024}MB"
+                    "${c.reason} · 约释放 ${c.freedKb / 1024}MB"
                 )
             }
-            app.stats.addBlocked(freed)
-            if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "释放 ${freed / 1024}MB · 看门狗自动执行")
+            app.stats.addBlocked(chosen.size, freed)
+            if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "约释放 ${freed / 1024}MB · 看门狗自动执行")
             return chosen.size
         }
         return 0
@@ -226,15 +241,18 @@ class GuardEngine(private val app: ProcApp) {
             if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
             else bgSince.putIfAbsent(p.packageName, now)
         }
+        val recent = recentlyUsed()
         val ctx = RuleContext(
             snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
-            perApp = { app.settings.getPerApp(it) }
+            perApp = { app.settings.getPerApp(it) },
+            monitorAll = app.settings.monitorMode == "all",
+            freqProtected = recent
         )
         val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
         val cooldownMs = app.settings.cooldownSec * 1000L
         return candidates
             .filter { c ->
-                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) &&
+                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) && c.pkg !in recent &&
                     autoKillable(c.pkg) &&
                     (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
             }
@@ -254,9 +272,9 @@ class GuardEngine(private val app: ProcApp) {
         for (c in chosen) {
             lastKilled[c.pkg] = now
             freed += c.freedKb
-            EventLog.add(LogType.KILL, "已清理 ${label(c.pkg)}", "${c.reason} · 释放 ${c.freedKb / 1024}MB")
+            EventLog.add(LogType.KILL, "已清理 ${label(c.pkg)}", "${c.reason} · 约释放 ${c.freedKb / 1024}MB")
         }
-        app.stats.addBlocked(freed)
+        app.stats.addBlocked(chosen.size, freed)
         return chosen.size to freed
     }
 
@@ -269,10 +287,12 @@ class GuardEngine(private val app: ProcApp) {
             val snap = app.repo.snapshot()
             val now = System.currentTimeMillis()
             val fg = EventHub.foregroundPackage.value
+            val recent = recentlyUsed()
             val chosen = snap.processes.filter {
                 it.user.startsWith("u0_") && it.packageName.isNotBlank() &&
                     !it.isForeground && it.packageName != fg &&
                     it.packageName !in protected && !app.settings.isWhitelisted(it.packageName) &&
+                    it.packageName !in recent &&
                     autoKillable(it.packageName)
             }
             if (chosen.isEmpty()) return 0 to 0L
@@ -287,8 +307,8 @@ class GuardEngine(private val app: ProcApp) {
                 }
             }
             if (r.ok || r.exitCode == 0) {
-                app.stats.addBlocked(freed)
-                EventLog.add(LogType.KILL, "一键清理", "清理 ${seen.size} 个进程，释放 ${freed / 1024}MB")
+                app.stats.addBlocked(seen.size, freed)
+                EventLog.add(LogType.KILL, "一键清理", "清理 ${seen.size} 个进程，约释放 ${freed / 1024}MB")
             }
             return seen.size to freed
         } finally {
@@ -307,12 +327,13 @@ class GuardEngine(private val app: ProcApp) {
     private fun autoKillable(pkg: String): Boolean {
         if (pkg.startsWith("android.process")) return false
         val ai = app.repo.appMap()[pkg]
-        val monitored = app.settings.monitored.contains(pkg)
-        // 显式启用了单应用规则的包，允许按其规则处理
-        if (app.settings.getPerApp(pkg).enabled) return true
-        if (ai == null) return monitored
-        if (ai.isSystem && !monitored) return false
-        return true
+        val explicitlyMonitored = app.settings.monitored.contains(pkg)
+        val perAppEnabled = app.settings.getPerApp(pkg).enabled
+        // 系统应用必须显式加入监控才可处理；单应用规则不解除系统应用保护。
+        if (ai != null && ai.isSystem) return explicitlyMonitored
+        if (ai == null) return explicitlyMonitored || perAppEnabled
+        // 用户应用：全量模式默认全管，或显式勾选 / 启用单应用规则。
+        return app.settings.monitorMode == "all" || explicitlyMonitored || perAppEnabled
     }
 
     /** 执行动作后的轻量通知（受「状态通知」开关控制）。 */
