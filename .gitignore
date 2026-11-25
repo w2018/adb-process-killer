@@ -1,0 +1,12 @@
+*.iml
+.gradle/
+/local.properties
+.idea/
+.DS_Store
+build/
+/captures/
+.externalNativeBuild/
+.cxx/
+tmp/
+doc/*.md
+!doc/版本变更记录 .md

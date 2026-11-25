@@ -1,0 +1,340 @@
+package com.w2018.procmanager.core
+
+import android.content.Intent
+import android.content.IntentFilter
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager
+import android.view.inputmethod.InputMethodManager
+import androidx.core.app.NotificationCompat
+import com.w2018.procmanager.ProcApp
+import com.w2018.procmanager.core.rule.BackgroundTimeRule
+import com.w2018.procmanager.core.rule.CpuRule
+import com.w2018.procmanager.core.rule.KillCandidate
+import com.w2018.procmanager.core.rule.MemoryRule
+import com.w2018.procmanager.core.rule.PerAppRule
+import com.w2018.procmanager.core.rule.Rule
+import com.w2018.procmanager.core.rule.RuleContext
+import com.w2018.procmanager.core.rule.WakeBlockRule
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * 守护引擎：事件驱动 + 轮询兜底 + 省电策略。
+ * - 事件驱动：无障碍上报前台切换时立即触发一次扫描。
+ * - 轮询兜底：按 scanInterval 秒（非精确）扫描。
+ * - 省电：仅扫描瞬间持短时 WakeLock 并超时释放；锁屏/非充电暂停；每包冷却；批量合并命令。
+ */
+class GuardEngine(private val app: ProcApp) {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var job: Job? = null
+    private val kick = Channel<Unit>(Channel.CONFLATED)
+
+    private val bgSince = HashMap<String, Long>()
+    private val lastKilled = HashMap<String, Long>()
+    private val rules: List<Rule> = listOf(
+        PerAppRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule()
+    )
+    private val scanTimes = ArrayDeque<Long>()
+
+    private var protected: Set<String> = emptySet()
+    private var lastSkipLog = 0L
+    private var lastEventLog = 0L
+
+    fun start() {
+        if (job != null) return
+        protected = computeProtected()
+        GuardRuntime.requestClean = { cleanNow() }
+        GuardRuntime.requestKick = { scope.launch { kick.trySend(Unit) } }
+        // 事件驱动：前台应用变化即触发扫描
+        scope.launch {
+            EventHub.foregroundPackage.collect { pkg ->
+                if (!pkg.isNullOrBlank()) kick.trySend(Unit)
+            }
+        }
+        job = scope.launch { loop() }
+        EventLog.add(LogType.SYSTEM, "守护引擎已就绪")
+    }
+
+    fun stop() {
+        job?.cancel()
+        job = null
+        GuardRuntime.requestClean = null
+        GuardRuntime.requestKick = null
+    }
+
+    private fun computeProtected(): Set<String> {
+        val s = HashSet<String>()
+        s.add(app.packageName)
+        s.addAll(
+            listOf(
+                "android", "com.android.systemui", "com.android.settings",
+                "com.android.phone", "com.android.providers.settings",
+                "com.android.networkstack.process"
+            )
+        )
+        runCatching {
+            val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+            val resolved = app.packageManager.resolveActivity(home, 0)
+            val homePkg: String? = resolved?.activityInfo?.packageName
+            if (homePkg != null) s.add(homePkg)
+        }
+        runCatching {
+            val imm = app.getSystemService(InputMethodManager::class.java)
+            val imePkg: String? = imm?.enabledInputMethodList?.firstOrNull()?.packageName
+            if (imePkg != null) s.add(imePkg)
+        }
+        return s
+    }
+
+    private suspend fun loop() {
+        while (currentCoroutineContext().isActive) {
+            val interval = app.settings.scanInterval.coerceIn(15, 120)
+            // 事件触发优先；否则等待到下一次轮询
+            val ev = withTimeoutOrNull(interval * 1000L) { kick.receive() }
+            if (!app.settings.guardian) continue
+            if (!app.settings.watchdog) continue
+            if (GuardRuntime.paused.value) continue
+            if (!shouldScan()) continue
+            if (!allowByFreq()) continue
+            runCatching { scanOnce(ev != null) }
+        }
+    }
+
+    private fun isCharging(): Boolean = runCatching {
+        val bm = app.getSystemService(BatteryManager::class.java)
+        bm?.isCharging == true
+    }.getOrDefault(false)
+
+    private fun shouldScan(): Boolean {
+        val pm = app.getSystemService(PowerManager::class.java) ?: return true
+        val screenOn = pm.isInteractive
+        val charging = isCharging()
+        // 夜间严格模式：23:00–07:00 更积极，忽略锁屏降频，持续清理后台
+        if (app.settings.nightMode && isNight()) return true
+        if (!screenOn && app.settings.screenOffSave && !(charging && app.settings.chargeExempt)) {
+            return false
+        }
+        if (app.settings.lockLowPower && !screenOn && !charging) {
+            return false
+        }
+        return true
+    }
+
+    private fun isNight(): Boolean {
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return h >= 23 || h < 7
+    }
+
+    /** ADB 调用频率上限（次/分钟）节流，避免高频调用耗电。 */
+    private fun allowByFreq(): Boolean {
+        val now = System.currentTimeMillis()
+        while (scanTimes.isNotEmpty() && now - scanTimes.first() > 60_000L) scanTimes.removeFirst()
+        val limit = app.settings.adbFreqLimit.coerceIn(1, 120)
+        if (scanTimes.size >= limit) return false
+        scanTimes.addLast(now)
+        return true
+    }
+
+    private suspend fun scanOnce(eventDriven: Boolean) {
+        val pm = app.getSystemService(PowerManager::class.java)
+        val lock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "proc:scan")
+        lock?.acquire(12_000L)
+        try {
+            val snap = app.repo.snapshot()
+            app.stats.addScan()
+            val now = System.currentTimeMillis()
+            val fg = EventHub.foregroundPackage.value
+            val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
+            val present = procs.map { it.packageName }.toHashSet()
+            bgSince.keys.retainAll { it in present }
+            for (p in procs) {
+                if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
+                else bgSince.putIfAbsent(p.packageName, now)
+            }
+            val ctx = RuleContext(snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
+                perApp = { app.settings.getPerApp(it) })
+            val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
+            val killed = execute(candidates, fg, now)
+            if (killed == 0 && eventDriven && now - lastEventLog > 8_000L) {
+                lastEventLog = now
+                EventLog.add(LogType.SCAN, "事件触发扫描", "前台切换 · 待机省电")
+            }
+            if (killed == 0 && !eventDriven && now - lastSkipLog > 5 * 60_000L) {
+                lastSkipLog = now
+                EventLog.add(LogType.SCAN, "定时扫描", "后台无异常，跳过处理")
+            }
+        } finally {
+            if (lock?.isHeld == true) lock.release()
+        }
+    }
+
+    private suspend fun execute(candidates: List<KillCandidate>, fg: String?, now: Long): Int {
+        if (candidates.isEmpty()) return 0
+        val chosen = LinkedHashMap<String, KillCandidate>()
+        val cooldownMs = app.settings.cooldownSec * 1000L
+        for (c in candidates) {
+            if (c.pkg == fg) continue
+            if (c.pkg in protected || app.settings.isWhitelisted(c.pkg)) continue
+            if (!autoKillable(c.pkg)) continue
+            val lk = lastKilled[c.pkg]
+            if (lk != null && now - lk < cooldownMs) continue
+            chosen.putIfAbsent(c.pkg, c)
+        }
+        if (chosen.isEmpty()) return 0
+        val cmd = chosen.keys.joinToString("; ") { "am force-stop $it" }
+        val r = app.channels.run(cmd, 20_000)
+        if (r.ok || r.exitCode == 0) {
+            var freed = 0L
+            for ((pkg, c) in chosen) {
+                lastKilled[pkg] = now
+                freed += c.freedKb
+                EventLog.add(
+                    LogType.KILL,
+                    "已清理 ${label(pkg)}",
+                    "${c.reason} · 释放 ${c.freedKb / 1024}MB"
+                )
+            }
+            app.stats.addBlocked(freed)
+            if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "释放 ${freed / 1024}MB · 看门狗自动执行")
+            return chosen.size
+        }
+        return 0
+    }
+
+    /**
+     * 立即扫描：执行一遍规则，不直接清理，返回“符合规则、可清理”的候选列表，供 UI 弹窗展示。
+     */
+    suspend fun previewCandidates(): List<KillCandidate> {
+        val snap = app.repo.snapshot()
+        val now = System.currentTimeMillis()
+        val fg = EventHub.foregroundPackage.value
+        val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
+        val present = procs.map { it.packageName }.toHashSet()
+        bgSince.keys.retainAll { it in present }
+        for (p in procs) {
+            if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
+            else bgSince.putIfAbsent(p.packageName, now)
+        }
+        val ctx = RuleContext(
+            snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
+            perApp = { app.settings.getPerApp(it) }
+        )
+        val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
+        val cooldownMs = app.settings.cooldownSec * 1000L
+        return candidates
+            .filter { c ->
+                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) &&
+                    autoKillable(c.pkg) &&
+                    (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
+            }
+            .distinctBy { it.pkg }
+            .sortedByDescending { it.freedKb }
+    }
+
+    /** 对指定候选逐项执行清理（来自“立即扫描”弹窗选择）。 */
+    suspend fun killCandidates(list: List<KillCandidate>): Pair<Int, Long> {
+        val chosen = list.distinctBy { it.pkg }
+        if (chosen.isEmpty()) return 0 to 0L
+        val now = System.currentTimeMillis()
+        val pkgs = chosen.map { it.pkg }
+        val r = app.channels.run(pkgs.joinToString("; ") { "am force-stop $it" }, 20_000)
+        if (!(r.ok || r.exitCode == 0)) return 0 to 0L
+        var freed = 0L
+        for (c in chosen) {
+            lastKilled[c.pkg] = now
+            freed += c.freedKb
+            EventLog.add(LogType.KILL, "已清理 ${label(c.pkg)}", "${c.reason} · 释放 ${c.freedKb / 1024}MB")
+        }
+        app.stats.addBlocked(freed)
+        return chosen.size to freed
+    }
+
+    /** 手动/一键清理：清空当前所有非前台、非白名单、非保护的后台应用。 */
+    suspend fun cleanNow(): Pair<Int, Long> {
+        val pm = app.getSystemService(PowerManager::class.java)
+        val lock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "proc:clean")
+        lock?.acquire(15_000L)
+        try {
+            val snap = app.repo.snapshot()
+            val now = System.currentTimeMillis()
+            val fg = EventHub.foregroundPackage.value
+            val chosen = snap.processes.filter {
+                it.user.startsWith("u0_") && it.packageName.isNotBlank() &&
+                    !it.isForeground && it.packageName != fg &&
+                    it.packageName !in protected && !app.settings.isWhitelisted(it.packageName) &&
+                    autoKillable(it.packageName)
+            }
+            if (chosen.isEmpty()) return 0 to 0L
+            val pkgs = chosen.map { it.packageName }.distinct()
+            val r = app.channels.run(pkgs.joinToString("; ") { "am force-stop $it" }, 25_000)
+            var freed = 0L
+            val seen = HashSet<String>()
+            for (p in chosen) {
+                if (seen.add(p.packageName)) {
+                    freed += p.rssKb
+                    lastKilled[p.packageName] = now
+                }
+            }
+            if (r.ok || r.exitCode == 0) {
+                app.stats.addBlocked(freed)
+                EventLog.add(LogType.KILL, "一键清理", "清理 ${seen.size} 个进程，释放 ${freed / 1024}MB")
+            }
+            return seen.size to freed
+        } finally {
+            if (lock?.isHeld == true) lock.release()
+        }
+    }
+
+    private fun label(pkg: String): String = app.repo.appMap()[pkg]?.label ?: pkg
+
+    /**
+     * 自动/批量清理的可执行判定：避免误杀系统关键进程。
+     * - android.process.* 等系统 provider 进程一律不自动清理（会不断重启导致循环）。
+     * - 系统应用默认不自动清理，除非用户显式加入监控。
+     * - 未知进程（非已安装包）默认不自动清理，除非已监控。
+     */
+    private fun autoKillable(pkg: String): Boolean {
+        if (pkg.startsWith("android.process")) return false
+        val ai = app.repo.appMap()[pkg]
+        val monitored = app.settings.monitored.contains(pkg)
+        // 显式启用了单应用规则的包，允许按其规则处理
+        if (app.settings.getPerApp(pkg).enabled) return true
+        if (ai == null) return monitored
+        if (ai.isSystem && !monitored) return false
+        return true
+    }
+
+    /** 执行动作后的轻量通知（受「状态通知」开关控制）。 */
+    private fun notifyAction(title: String, text: String) {
+        runCatching {
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            val chId = "guard_events"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(chId) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(chId, "清理提醒", NotificationManager.IMPORTANCE_LOW).apply {
+                        setShowBadge(false)
+                    }
+                )
+            }
+            val n = NotificationCompat.Builder(app, chId)
+                .setSmallIcon(com.w2018.procmanager.R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(2000 + (System.currentTimeMillis() % 1000).toInt(), n)
+        }
+    }
+}

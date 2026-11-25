@@ -1,0 +1,235 @@
+package com.w2018.procmanager.data
+
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import com.w2018.procmanager.data.model.AppInfo
+import com.w2018.procmanager.data.model.CpuInfo
+import com.w2018.procmanager.data.model.MemInfo
+import com.w2018.procmanager.data.model.ProcInfo
+import com.w2018.procmanager.data.model.Snapshot
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * 应用/进程数据仓库。通过 PackageManager 取应用元数据，通过 shell(ps/top/dumpsys/meminfo)
+ * 取进程、CPU、内存。所有采集在 IO 线程执行。
+ */
+class AppRepository(
+    private val context: Context,
+    private val channels: ChannelManager
+) {
+    private var appCache: List<AppInfo>? = null
+
+    // ---------------- 应用列表（PackageManager，无需 shell） ----------------
+
+    suspend fun apps(force: Boolean = false): List<AppInfo> = withContext(Dispatchers.IO) {
+        val cached = appCache
+        if (!force && cached != null) return@withContext cached
+        val pm = context.packageManager
+        val list = ArrayList<AppInfo>()
+        val installed = pm.getInstalledPackages(PackageManager.GET_META_DATA)
+        for (p in installed) {
+            val ai = p.applicationInfo ?: continue
+            val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val label = runCatching { pm.getApplicationLabel(ai).toString() }
+                .getOrDefault(p.packageName)
+            val autoStart = runCatching {
+                pm.queryBroadcastReceivers(
+                    Intent(Intent.ACTION_BOOT_COMPLETED).setPackage(p.packageName), 0
+                ).isNotEmpty()
+            }.getOrDefault(false)
+            list.add(AppInfo(p.packageName, label, isSystem, ai.uid, autoStart))
+        }
+        list.sortWith(compareBy({ it.isSystem }, { it.label.lowercase() }))
+        appCache = list
+        list
+    }
+
+    fun appMap(): Map<String, AppInfo> =
+        appCache?.associateBy { it.packageName } ?: emptyMap()
+
+    /** 当前被冻结（disabled）的包名集合，用于恢复冻结状态展示。 */
+    suspend fun disabledPackages(): Set<String> = withContext(Dispatchers.IO) {
+        val r = channels.run("pm list packages -d")
+        if (!r.ok) return@withContext emptySet()
+        r.stdout.lineSequence()
+            .mapNotNull { line -> line.trim().removePrefix("package:").takeIf { it.isNotBlank() } }
+            .toSet()
+    }
+
+    // ---------------- 内存 ----------------
+
+    suspend fun memInfo(): MemInfo = withContext(Dispatchers.IO) {
+        val r = channels.run("cat /proc/meminfo")
+        if (r.ok) parseMemInfo(r.stdout) else amMem()
+    }
+
+    /** 无 shell 权限时通过 ActivityManager 读取系统内存（无需任何权限）。 */
+    private fun amMem(): MemInfo = runCatching {
+        val am = context.getSystemService(android.app.ActivityManager::class.java)
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        MemInfo(mi.totalMem / 1024, mi.availMem / 1024, mi.availMem / 1024)
+    }.getOrDefault(MemInfo.EMPTY)
+
+    private fun parseMemInfo(text: String): MemInfo {
+        var total = 0L; var avail = 0L; var free = 0L
+        for (line in text.lineSequence()) {
+            val parts = line.split(':', limit = 2)
+            if (parts.size < 2) continue
+            val key = parts[0].trim()
+            val kb = parts[1].trim().substringBefore(' ').toLongOrNull() ?: continue
+            when (key) {
+                "MemTotal" -> total = kb
+                "MemAvailable" -> avail = kb
+                "MemFree" -> free = kb
+            }
+        }
+        return MemInfo(total, avail, free)
+    }
+
+    // ---------------- CPU ----------------
+
+    private object TopCmd {
+        const val CMD = "top -b -n 2 -d 1"
+    }
+
+    suspend fun cpuInfo(): CpuInfo = withContext(Dispatchers.IO) {
+        val r = channels.run(TopCmd.CMD, timeoutMs = 15000)
+        parseCpu(r.stdout)
+    }
+
+    private fun parseCpu(text: String): CpuInfo {
+        var used = 0f
+        var load = "0.0 / 0.0 / 0.0"
+        for (line in text.lineSequence()) {
+            if (line.startsWith("Load:")) load = line.removePrefix("Load:").trim()
+            if (line.contains("%cpu")) {
+                val total = Regex("(\\d+)%cpu").find(line)?.groupValues?.get(1)?.toFloatOrNull()
+                val idle = Regex("(\\d+)%idle").find(line)?.groupValues?.get(1)?.toFloatOrNull()
+                if (total != null && idle != null && total > 0f) {
+                    used = (total - idle) / total * 100f
+                }
+            }
+        }
+        return CpuInfo(used, load)
+    }
+
+    // ---------------- 进程 ----------------
+
+    suspend fun processes(topText: String? = null): List<ProcInfo> = withContext(Dispatchers.IO) {
+        val psResult = channels.run("ps -A -o PID,PPID,USER,NAME,RSS,STAT,ELAPSED")
+        if (psResult.stdout.isBlank()) return@withContext emptyList()
+
+        val cpuMap = HashMap<Int, Float>()
+        val top = topText ?: channels.run(TopCmd.CMD, timeoutMs = 15000).stdout
+        parseTopCpu(top, cpuMap)
+
+        val oomMap = HashMap<Int, Int>()
+        val actResult = channels.run("dumpsys activity processes")
+        if (actResult.ok) parseOom(actResult.stdout, oomMap)
+
+        val appMap = appMap()
+        val out = ArrayList<ProcInfo>()
+        var headerSkipped = false
+        for (raw in psResult.stdout.lineSequence()) {
+            val line = raw.trim()
+            if (line.isEmpty()) continue
+            if (!headerSkipped && line.startsWith("PID")) { headerSkipped = true; continue }
+            val t = line.split(Regex("\\s+"))
+            if (t.size < 7) continue
+            val pid = t[0].toIntOrNull() ?: continue
+            val ppid = t[1].toIntOrNull() ?: 0
+            val user = t[2]
+            val name = t[3]
+            val rss = t[4].toLongOrNull() ?: 0L
+            val stat = t[5]
+            val elapsed = parseElapsed(t[6])
+            val pkg = name.substringBefore(':')
+            val info = appMap[pkg]
+            val oom = oomMap[pid] ?: Int.MIN_VALUE
+            val isSystem = info?.isSystem
+                ?: (user == "root" || user == "system" || name.startsWith("["))
+            val isForeground = when {
+                oom == Int.MIN_VALUE -> false
+                else -> oom <= 200
+            }
+            out.add(
+                ProcInfo(
+                    pid = pid, ppid = ppid, user = user, name = name, packageName = pkg,
+                    rssKb = rss, stat = stat, cpuPercent = cpuMap[pid] ?: 0f,
+                    oomCur = if (oom == Int.MIN_VALUE) -1000 else oom,
+                    isForeground = isForeground, isSystem = isSystem, elapsedSec = elapsed
+                )
+            )
+        }
+        out.sortByDescending { it.rssKb }
+        out
+    }
+
+    /** 解析 ps ELAPSED：MM:SS / HH:MM:SS / D-HH:MM:SS，返回秒。 */
+    private fun parseElapsed(s: String): Long {
+        if (s.isBlank()) return 0
+        var f = s
+        var days = 0L
+        if (f.contains('-')) {
+            val idx = f.indexOf('-')
+            days = f.substring(0, idx).toLongOrNull() ?: 0
+            f = f.substring(idx + 1)
+        }
+        val parts = f.split(':').map { it.toLongOrNull() ?: 0L }
+        return when (parts.size) {
+            3 -> days * 86400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
+            2 -> days * 86400 + parts[0] * 60 + parts[1]
+            1 -> days * 86400 + parts[0]
+            else -> 0
+        }
+    }
+
+    private fun parseTopCpu(text: String, into: MutableMap<Int, Float>) {
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            if (line.isEmpty() || !line[0].isDigit()) continue
+            val t = line.split(Regex("\\s+"))
+            if (t.size < 9) continue
+            val pid = t[0].toIntOrNull() ?: continue
+            val cpu = t[8].toFloatOrNull() ?: continue
+            into[pid] = cpu
+        }
+    }
+
+    private fun parseOom(text: String, into: MutableMap<Int, Int>) {
+        var currentPid = -1
+        val headRe = Regex("ProcessRecord\\{[0-9a-f]+ (\\d+):")
+        val oomRe = Regex("oom adj:.*cur=(-?\\d+)")
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            headRe.find(line)?.let { currentPid = it.groupValues[1].toIntOrNull() ?: -1 }
+            if (currentPid > 0) {
+                oomRe.find(line)?.let {
+                    it.groupValues[1].toIntOrNull()?.let { v -> into[currentPid] = v }
+                    currentPid = -1
+                }
+            }
+        }
+    }
+
+    // ---------------- 汇总采集 ----------------
+
+    suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) {
+        val apps = apps()
+        val ready = channels.current()?.isReady() == true
+        if (!ready) {
+            // 未连接权限通道：仍展示已安装应用（用户/系统）与系统内存（ActivityManager 读取），
+            // 进程/CPU 需要 shell 才能获取，此处留空而不报错，避免界面卡顿。
+            return@withContext Snapshot(apps, emptyList(), memInfo(), CpuInfo.EMPTY, System.currentTimeMillis())
+        }
+        val top = channels.run(TopCmd.CMD, timeoutMs = 15000).stdout
+        val procs = processes(top)
+        val mem = memInfo()
+        val cpu = parseCpu(top)
+        Snapshot(apps, procs, mem, cpu, System.currentTimeMillis())
+    }
+}
