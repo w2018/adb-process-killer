@@ -66,7 +66,7 @@ import com.w2018.procmanager.ui.theme.C
 import kotlinx.coroutines.launch
 
 @Composable
-fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Unit = {}) {
+fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) -> Unit = {}) {
     val toast = LocalToast.current
     val confirm = LocalConfirm.current
     val scope = rememberCoroutineScope()
@@ -116,7 +116,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
                     )
                 }
             }
-            IconBtn("bell", badge = ui.logs.any { it.type == com.w2018.procmanager.core.LogType.KILL || it.type == com.w2018.procmanager.core.LogType.RULE }) { onOpenLogs() }
+            IconBtn("bell", badge = ui.logs.any { it.type == com.w2018.procmanager.core.LogType.KILL || it.type == com.w2018.procmanager.core.LogType.RULE }) { onOpenLogs("kill") }
         }
 
         // 未连接提示条
@@ -229,7 +229,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("最近事件", action = {
-            Row(Modifier.clickable { onOpenLogs() }, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.clickable { onOpenLogs("all") }, verticalAlignment = Alignment.CenterVertically) {
                 Text("全部", color = C.accent, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                 Ic("chevron", 14, C.accent)
             }

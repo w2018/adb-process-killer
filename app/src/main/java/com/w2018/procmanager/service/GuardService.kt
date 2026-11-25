@@ -88,8 +88,13 @@ class GuardService : Service() {
         val paused = GuardRuntime.paused.value
         val statusText = if (paused) "已暂停" else "守护中"
         val freedMb = stats.freedKb / 1024
+        val scopeText = if (app.settings.monitorMode == "all") "全部用户应用" else "$monitored 个应用"
         val title = "进程杀手 · $statusText"
-        val text = "监控 $monitored 个应用 · 今日拦截 ${stats.blocked} 次 · 释放 $freedMb MB"
+        val text = "监控 $scopeText · 今日拦截 ${stats.blocked} 次 · 释放 $freedMb MB"
+        val last = EventLog.events.value.lastOrNull { it.type == LogType.KILL || it.type == LogType.RULE }
+        val bigText = if (last != null)
+            text + "\n最近：" + last.title + (if (last.detail.isNotBlank()) " · " + last.detail else "")
+        else text
 
         val contentIntent = PendingIntent.getActivity(
             this, 0,
@@ -114,7 +119,7 @@ class GuardService : Service() {
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(title)
             .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

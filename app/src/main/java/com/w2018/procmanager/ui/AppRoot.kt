@@ -85,6 +85,7 @@ fun AppRoot() {
 
     var tab by remember { mutableStateOf(Tab.DASH) }
     var sheetPkg by remember { mutableStateOf<String?>(null) }
+    var logFilterReq by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         ui.observe(scope)
@@ -138,10 +139,10 @@ fun AppRoot() {
                                 label = "tabContent",
                             ) { t ->
                                 when (t) {
-                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { tab = Tab.LOGS })
+                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; tab = Tab.LOGS })
                                     Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
                                     Tab.RULES -> RulesScreen(ui)
-                                    Tab.LOGS -> LogsScreen(ui)
+                                    Tab.LOGS -> LogsScreen(ui, logFilterReq) { logFilterReq = null }
                                     Tab.SET -> SettingsScreen(ui)
                                 }
                             }

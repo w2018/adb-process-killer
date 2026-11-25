@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -122,6 +124,9 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             else -> list
         }
     }
+    // 切换筛选/排序/搜索时回到列表顶部
+    val listState = rememberLazyListState()
+    LaunchedEffect(filter, sort, search) { listState.scrollToItem(0) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -136,6 +141,13 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             singleLine = true,
             placeholder = { Text("搜索应用名称或包名", color = C.muted, fontSize = 12.5.sp) },
             leadingIcon = { Ic("search", 17, C.muted) },
+            trailingIcon = {
+                if (search.isNotEmpty()) {
+                    Box(Modifier.clip(RoundedCornerShape(50)).clickable { search = "" }.padding(6.dp)) {
+                        Ic("x", 15, C.muted)
+                    }
+                }
+            },
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = C.card, unfocusedContainerColor = C.card,
                 focusedTextColor = C.text, unfocusedTextColor = C.text,
@@ -168,7 +180,7 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         if (list.isEmpty()) {
             Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
         } else {
-            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sorted, key = { it.packageName }) { a ->
                     AppRow(ui, a, agg[a.packageName], onOpenApp)
                 }

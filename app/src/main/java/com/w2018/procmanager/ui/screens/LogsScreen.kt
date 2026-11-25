@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,8 +43,13 @@ import com.w2018.procmanager.ui.components.LocalToast
 import com.w2018.procmanager.ui.theme.C
 
 @Composable
-fun LogsScreen(ui: AppUi) {
-    var filter by remember { mutableStateOf("all") }
+fun LogsScreen(ui: AppUi, initialFilter: String? = null, onFilterConsumed: () -> Unit = {}) {
+    var filter by remember { mutableStateOf(initialFilter ?: "all") }
+    LaunchedEffect(initialFilter) {
+        if (initialFilter != null) { filter = initialFilter; onFilterConsumed() }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(filter) { listState.scrollToItem(0) }
     val toast = LocalToast.current
     val confirm = LocalConfirm.current
     val logs = ui.logs.filter { filter == "all" || it.type.key == filter }
@@ -78,7 +85,7 @@ fun LogsScreen(ui: AppUi) {
                 Text("暂无日志", color = C.muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(30.dp),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             } else {
-                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp)) {
+                LazyColumn(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp), state = listState) {
                     items(logs) { LogItem(it) }
                 }
             }
