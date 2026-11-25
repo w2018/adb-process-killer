@@ -2,6 +2,8 @@ package com.w2018.procmanager.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +46,7 @@ import com.w2018.procmanager.ui.components.IconBtn
 import com.w2018.procmanager.ui.components.LocalConfirm
 import com.w2018.procmanager.ui.components.LocalToast
 import com.w2018.procmanager.ui.theme.C
+import kotlin.math.abs
 
 @Composable
 fun LogsScreen(ui: AppUi, initialFilter: String? = null, onClose: () -> Unit = {}, onFilterConsumed: () -> Unit = {}) {
@@ -83,9 +88,33 @@ fun LogsScreen(ui: AppUi, initialFilter: String? = null, onClose: () -> Unit = {
             Chip("系统", filter == "system") { filter = "system" }
         }
         Spacer(Modifier.height(12.dp))
+        val logFilters = listOf("all", "kill", "rule", "scan", "channel", "system")
         Box(
             Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(16.dp)).background(C.card)
-                .border(1.dp, C.border, RoundedCornerShape(16.dp)),
+                .border(1.dp, C.border, RoundedCornerShape(16.dp))
+                .pointerInput(Unit) {
+                    val thr = viewConfiguration.touchSlop * 2f
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var acc = 0f
+                        var done = false
+                        while (true) {
+                            val ev = awaitPointerEvent()
+                            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!ch.pressed) break
+                            acc += ch.positionChange().x
+                            if (!done && abs(acc) > thr) {
+                                val dir = if (acc < 0f) 1 else -1
+                                val i = logFilters.indexOf(filter).coerceAtLeast(0)
+                                val n = i + dir
+                                if (n in logFilters.indices) filter = logFilters[n]
+                                done = true
+                                ch.consume()
+                            }
+                            if (done) ch.consume()
+                        }
+                    }
+                },
         ) {
             if (logs.isEmpty()) {
                 Text("暂无日志", color = C.muted, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().padding(30.dp),

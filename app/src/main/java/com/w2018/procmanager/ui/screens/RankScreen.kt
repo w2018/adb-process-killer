@@ -47,9 +47,7 @@ import com.w2018.procmanager.ui.theme.C
  * 入口由底部 Tab「排行榜」进入；日志入口已移至首页「最近事件-全部」。
  */
 @Composable
-fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
-    var cat by rememberSaveable { mutableIntStateOf(0) }
-    var period by rememberSaveable { mutableStateOf("today") }
+fun RankScreen(ui: AppUi, cat: Int = 0, onCatChange: (Int) -> Unit = {}, period: String = "today", onPeriodChange: (String) -> Unit = {}, onOpenApp: (String) -> Unit = {}) {
     val cats = listOf("清理排行", "自启排行", "优化建议")
 
     val apps = ui.snapshot?.apps ?: emptyList()
@@ -100,7 +98,7 @@ fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
         Spacer(Modifier.height(12.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            cats.forEachIndexed { i, s -> Chip(s, i == cat) { cat = i } }
+            cats.forEachIndexed { i, s -> Chip(s, i == cat) { onCatChange(i) } }
         }
         Spacer(Modifier.height(10.dp))
 
@@ -110,7 +108,7 @@ fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
                 // 时间段快捷筛选
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     val periods = listOf("today" to "今日", "yesterday" to "昨日", "week" to "近7天", "month" to "当月")
-                    periods.forEach { (k, label) -> Chip(label, period == k) { period = k } }
+                    periods.forEach { (k, label) -> Chip(label, period == k) { onPeriodChange(k) } }
                 }
                 Spacer(Modifier.height(10.dp))
                 AutoRankList(autoSorted, autoCounts, memMap, ui, onOpenApp)

@@ -166,8 +166,13 @@ class SettingsStore(context: Context) {
         val memMb: Int = 0,
         val bgMin: Int = 0,
         val cpu: Int = 0,
-        /** 单应用缓冲时间(分钟)，0=跟随全局。进入后台超过该时长才按阈值清理。 */
+        /** 单应用缓冲/保护时间(分钟)，0=跟随全局。进入后台超过该时长才按阈值清理。 */
         val bufMin: Int = 0,
+        /** 子规则开关（与全局清理规则对齐；enabled 时以本组为准并忽略全局规则）。 */
+        val memStop: Boolean = true,
+        val cpuStop: Boolean = true,
+        val bgStop: Boolean = true,
+        val wakeBlock: Boolean = false,
     )
 
     fun getPerApp(pkg: String): PerAppCfg {
@@ -180,6 +185,10 @@ class SettingsStore(context: Context) {
             bgMin = p.getOrNull(2)?.toIntOrNull() ?: 0,
             cpu = p.getOrNull(3)?.toIntOrNull() ?: 0,
             bufMin = p.getOrNull(4)?.toIntOrNull() ?: 0,
+            memStop = p.getOrNull(5)?.toIntOrNull()?.let { it == 1 } ?: true,
+            cpuStop = p.getOrNull(6)?.toIntOrNull()?.let { it == 1 } ?: true,
+            bgStop = p.getOrNull(7)?.toIntOrNull()?.let { it == 1 } ?: true,
+            wakeBlock = p.getOrNull(8)?.toIntOrNull()?.let { it == 1 } ?: false,
         )
     }
 
@@ -187,7 +196,13 @@ class SettingsStore(context: Context) {
         if (!c.enabled && c.memMb == 0 && c.bgMin == 0 && c.cpu == 0 && c.bufMin == 0) {
             sp.edit { remove("pa_$pkg") }
         } else {
-            sp.edit { putString("pa_$pkg", "${if (c.enabled) 1 else 0};${c.memMb};${c.bgMin};${c.cpu};${c.bufMin}") }
+            sp.edit {
+                putString(
+                    "pa_$pkg",
+                    "${if (c.enabled) 1 else 0};${c.memMb};${c.bgMin};${c.cpu};${c.bufMin};" +
+                        "${if (c.memStop) 1 else 0};${if (c.cpuStop) 1 else 0};${if (c.bgStop) 1 else 0};${if (c.wakeBlock) 1 else 0}"
+                )
+            }
         }
     }
 

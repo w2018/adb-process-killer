@@ -69,6 +69,7 @@ import com.w2018.procmanager.ui.components.MiniButton
 import com.w2018.procmanager.ui.components.ProcButton
 import com.w2018.procmanager.ui.components.ProcSwitch
 import com.w2018.procmanager.ui.components.SliderRow
+import com.w2018.procmanager.ui.components.SwitchRow
 import com.w2018.procmanager.ui.components.TagC
 import com.w2018.procmanager.ui.components.avatarColor
 import com.w2018.procmanager.ui.components.avatarLetter
@@ -95,8 +96,7 @@ private fun fmtElapsed(sec: Long): String {
 }
 
 @Composable
-fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
-    var filter by rememberSaveable { mutableStateOf("all") }
+fun AppsScreen(ui: AppUi, filter: String = "all", onFilterChange: (String) -> Unit = {}, onOpenApp: (String) -> Unit) {
     var search by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf("default") }
     val scope = rememberCoroutineScope()
@@ -201,13 +201,13 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             val cFrozen = apps.count { ui.isFrozen(it.packageName) }
             val cAuto = apps.count { it.autoStart }
             val cRule = apps.count { ui.app.settings.hasPerAppRule(it.packageName) || ui.bgStopSet.contains(it.packageName) }
-            Chip("全部 ${apps.size}", filter == "all") { filter = "all" }
-            Chip("用户应用 $cUser", filter == "user") { filter = "user" }
-            Chip("系统应用 $cSys", filter == "sys") { filter = "sys" }
-            Chip("运行中 $cRun", filter == "run") { filter = "run" }
-            Chip("已冻结 $cFrozen", filter == "frozen") { filter = "frozen" }
-            Chip("自启动 $cAuto", filter == "auto") { filter = "auto" }
-            Chip("有规则 $cRule", filter == "rule") { filter = "rule" }
+            Chip("全部 ${apps.size}", filter == "all") { onFilterChange("all") }
+            Chip("用户应用 $cUser", filter == "user") { onFilterChange("user") }
+            Chip("系统应用 $cSys", filter == "sys") { onFilterChange("sys") }
+            Chip("运行中 $cRun", filter == "run") { onFilterChange("run") }
+            Chip("已冻结 $cFrozen", filter == "frozen") { onFilterChange("frozen") }
+            Chip("自启动 $cAuto", filter == "auto") { onFilterChange("auto") }
+            Chip("有规则 $cRule", filter == "rule") { onFilterChange("rule") }
         }
         Spacer(Modifier.height(10.dp))
         val showFab by remember { derivedStateOf { listState.firstVisibleItemIndex > 4 } }
@@ -483,14 +483,22 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                 }
                 if (per.enabled) {
                     Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
-                    SliderRow("内存上限", per.memMb, 0, 1024, if (per.memMb == 0) "MB·跟随全局" else "MB") { ui.setPerApp(pkg, per.copy(memMb = it)) }
+                    SwitchRow("memory", "内存超限清理", "该应用内存超限时终止（忽略全局规则）", per.memStop) { ui.setPerApp(pkg, per.copy(memStop = it)) }
+                    if (per.memStop) {
+                        SliderRow("内存上限", per.memMb, 0, 1024, if (per.memMb == 0) "MB·跟随全局阈值" else "MB") { ui.setPerApp(pkg, per.copy(memMb = it)) }
+                    }
                     Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
-                    SliderRow("后台超时", per.bgMin, 0, 60, if (per.bgMin == 0) "分·跟随全局" else "分") { ui.setPerApp(pkg, per.copy(bgMin = it)) }
+                    SwitchRow("cpu", "CPU 超限清理", "该应用 CPU 超限时终止（忽略全局规则）", per.cpuStop) { ui.setPerApp(pkg, per.copy(cpuStop = it)) }
+                    if (per.cpuStop) {
+                        SliderRow("CPU 上限", per.cpu, 0, 100, if (per.cpu == 0) "%·跟随全局阈值" else "%") { ui.setPerApp(pkg, per.copy(cpu = it)) }
+                    }
                     Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
-                    SliderRow("CPU 上限", per.cpu, 0, 100, if (per.cpu == 0) "%·跟随全局" else "%") { ui.setPerApp(pkg, per.copy(cpu = it)) }
+                    SwitchRow("clock", "后台超时清理", "切后台超过「保护时间」后终止", per.bgStop) { ui.setPerApp(pkg, per.copy(bgStop = it)) }
                     Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
-                    SliderRow("缓冲时间", per.bufMin, 0, 30, if (per.bufMin == 0) "分·跟随全局" else "分") { ui.setPerApp(pkg, per.copy(bufMin = it)) }
-                    Text("0 表示沿用全局规则；开启后仅对该应用生效，不受全局阈值影响（单应用规则＞全局规则）。",
+                    SwitchRow("lock", "关联唤醒拦截", "清理后短时间内被重新拉起则再次终止", per.wakeBlock) { ui.setPerApp(pkg, per.copy(wakeBlock = it)) }
+                    Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
+                    SliderRow("保护时间", per.bufMin, 0, 30, if (per.bufMin == 0) "分·跟随全局" else "分") { ui.setPerApp(pkg, per.copy(bufMin = it)) }
+                    Text("开启后该应用完全按本组规则执行、忽略全局规则；关闭则回落全局规则。阈值为 0 时沿用全局阈值；保护时间＝切后台超过此时长才进入后台超时/内存/CPU 清理评估。",
                         color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp), lineHeight = 15.sp)
                 }
             }

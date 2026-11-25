@@ -70,8 +70,6 @@ fun RulesScreen(ui: AppUi) {
             GroupLabel("触发阈值")
             SliderRow("内存占用阈值", d.mem, 50, 500, "MB") { v -> edit { it.copy(mem = v) } }
             Divider()
-            SliderRow("后台占用时长", d.bgTime, 1, 60, "分钟") { v -> edit { it.copy(bgTime = v) } }
-            Divider()
             SliderRow("CPU 占用阈值", d.cpu, 5, 80, "%") { v -> edit { it.copy(cpu = v) } }
         }
         Spacer(Modifier.height(14.dp))
@@ -83,7 +81,7 @@ fun RulesScreen(ui: AppUi) {
             Divider()
             SwitchRow("cpu", "CPU 超限清理", "后台应用 CPU 超过上方「CPU 占用阈值」时终止", d.cpuStop) { v -> edit { it.copy(cpuStop = v) } }
             Divider()
-            SwitchRow("clock", "后台超时清理", "后台停留超过「后台占用时长」后终止", d.bgStop) { v -> edit { it.copy(bgStop = v) } }
+            SwitchRow("clock", "后台超时清理", "后台停留超过「常用应用保护时间」后终止", d.bgStop) { v -> edit { it.copy(bgStop = v) } }
             Divider()
             SwitchRow("lock", "关联唤醒拦截", "清理后短时间内被重新拉起（关联唤醒）则再次终止", d.wakeBlock) { v -> edit { it.copy(wakeBlock = v) } }
         }
@@ -118,7 +116,7 @@ fun RulesScreen(ui: AppUi) {
         GroupCard {
             GroupLabel("执行控制")
             SliderRow("常用应用保护时间", d.buffer, 0, 30, "分钟") { v -> edit { it.copy(buffer = v) } }
-            Text("应用进入后台超过该时长才按「内存/CPU 阈值」清理（即该时长内视为“常用应用”受保护，不清理）；回到前台立即刷新计时。",
+            Text("统一后台门限：应用切入后台超过该时长后，才会进入「后台超时 / 内存 / CPU」清理评估；该时长内视为常用应用受保护；回到前台立即刷新计时。",
                 color = C.muted, fontSize = 10.5.sp,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 10.dp, bottom = 12.dp),
                 lineHeight = 15.sp)

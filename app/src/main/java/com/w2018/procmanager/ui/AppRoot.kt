@@ -2,10 +2,13 @@ package com.w2018.procmanager.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,14 +34,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +74,7 @@ import com.w2018.procmanager.ui.theme.C
 import com.w2018.procmanager.ui.theme.ScaledContent
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DASH("概览", Icons.Filled.Home),
@@ -91,6 +99,9 @@ fun AppRoot() {
     val pagerState = rememberPagerState(pageCount = { pages.size })
 
     var tab by remember { mutableStateOf(Tab.DASH) }
+    var appsFilter by rememberSaveable { mutableStateOf("all") }
+    var rankCat by rememberSaveable { mutableIntStateOf(0) }
+    var rankPeriod by rememberSaveable { mutableStateOf("today") }
     var sheetPkg by remember { mutableStateOf<String?>(null) }
     var logFilterReq by remember { mutableStateOf<String?>(null) }
     var showLogs by remember { mutableStateOf(false) }
@@ -100,17 +111,66 @@ fun AppRoot() {
 
     fun selectTab(t: Tab) {
         val i = pages.indexOf(t)
-        if (i >= 0) scope.launch { pagerState.animateScrollToPage(i) }
+        if (i >= 0) scope.launch {
+            pagerState.animateScrollToPage(i, animationSpec = tween(durationMillis = 280, easing = FastOutSlowInEasing))
+        }
+    }
+
+    // 层级滑动：优先切换当前页的「子分类」，滑到子分类边界后再切换主 Tab
+    val appsFilters = remember { listOf("all", "user", "sys", "run", "frozen", "auto", "rule") }
+    val rankCatCount = 3
+    fun movePage(dir: Int) {
+        val t = pagerState.currentPage + dir
+        if (t in pages.indices) scope.launch { pagerState.animateScrollToPage(t) }
+    }
+    val pagerSwipe = Modifier.pointerInput(tab) {
+        val thr = viewConfiguration.touchSlop * 2f
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var acc = 0f
+            var done = false
+            while (true) {
+                val ev = awaitPointerEvent()
+                val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+                if (!ch.pressed) break
+                acc += ch.positionChange().x
+                if (!done && abs(acc) > thr) {
+                    val dir = if (acc < 0f) 1 else -1
+                    when (tab) {
+                        Tab.APPS -> {
+                            val i = appsFilters.indexOf(appsFilter).coerceAtLeast(0)
+                            val n = i + dir
+                            if (n in appsFilters.indices) appsFilter = appsFilters[n] else movePage(dir)
+                        }
+                        Tab.RANK -> {
+                            if (rankCat == 1) {
+                                // 自启排行页：先切换时间段子分类，到边界再切类别，再到边界切主 Tab
+                                val periods = listOf("today", "yesterday", "week", "month")
+                                val i = periods.indexOf(rankPeriod).coerceAtLeast(0)
+                                val n = i + dir
+                                if (n in periods.indices) rankPeriod = periods[n]
+                                else {
+                                    val nc = rankCat + dir
+                                    if (nc in 0 until rankCatCount) rankCat = nc else movePage(dir)
+                                }
+                            } else {
+                                val n = rankCat + dir
+                                if (n in 0 until rankCatCount) rankCat = n else movePage(dir)
+                            }
+                        }
+                        else -> movePage(dir)
+                    }
+                    done = true
+                    ch.consume()
+                }
+                if (done) ch.consume()
+            }
+        }
     }
 
     // 左右滑动切换：Pager 负责手势（子页面内横向滚动会优先消费手势），滑动到哪页 Tab 同步到哪页
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }.collect { p -> tab = pages.getOrElse(p) { Tab.DASH } }
-    }
-    // Tab 栏点击 / 程序内切换 → 滚动到对应页
-    LaunchedEffect(tab) {
-        val i = pages.indexOf(tab)
-        if (i >= 0 && pagerState.currentPage != i) pagerState.animateScrollToPage(i)
     }
 
     LaunchedEffect(Unit) {
@@ -159,13 +219,22 @@ fun AppRoot() {
             ScaledContent {
                 Box(Modifier.fillMaxSize().background(C.bg)) {
                     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-                        HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
-                            when (pages[page]) {
-                                Tab.DASH -> DashScreen(ui, onOpenSettings = { showSettings = true }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true }, onOpenDevice = { showDevice = true })
-                                Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
-                                Tab.RULES -> RulesScreen(ui)
-                                Tab.RANK -> RankScreen(ui) { sheetPkg = it }
-                                else -> {}
+                        HorizontalPager(state = pagerState, userScrollEnabled = false, modifier = Modifier.weight(1f).fillMaxWidth().then(pagerSwipe)) { page ->
+                            Box(
+                                Modifier.fillMaxSize().graphicsLayer {
+                                    val offset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+                                    val f = abs(offset).coerceIn(0f, 1f)
+                                    alpha = 1f - f * 0.35f
+                                    translationX = size.width * offset * 0.14f
+                                }
+                            ) {
+                                when (pages[page]) {
+                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { showSettings = true }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true }, onOpenDevice = { showDevice = true })
+                                    Tab.APPS -> AppsScreen(ui, appsFilter, { appsFilter = it }) { sheetPkg = it }
+                                    Tab.RULES -> RulesScreen(ui)
+                                    Tab.RANK -> RankScreen(ui, rankCat, { rankCat = it }, rankPeriod, { rankPeriod = it }) { sheetPkg = it }
+                                    else -> {}
+                                }
                             }
                         }
                         ProcTabBar(current = tab, rulesDirty = ui.rulesDirty, onSelect = { selectTab(it) })

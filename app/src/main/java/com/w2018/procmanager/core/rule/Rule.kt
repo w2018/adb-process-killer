@@ -70,13 +70,6 @@ class RuleContext(
         return mb * 1024L
     }
 
-    /** 单应用后台超时毫秒（未配置则用全局）。 */
-    fun bgMinMs(pkg: String): Long {
-        val p = perApp(pkg)
-        val m = if (p.enabled && p.bgMin > 0) p.bgMin else settings.bgMinutes
-        return m * 60_000L
-    }
-
     /** 单应用 CPU 上限百分比（未配置则用全局）。 */
     fun cpuLimit(pkg: String): Float {
         val p = perApp(pkg)
