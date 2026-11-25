@@ -72,9 +72,11 @@ private data class DevInfo(
     // 屏幕
     val widthPx: Int = 0, val heightPx: Int = 0, val widthDp: Int = 0, val heightDp: Int = 0,
     val densityDpi: Int = 0, val xdpi: Float = 0f, val ydpi: Float = 0f, val diagonalIn: Float = 0f,
+    val refreshRate: String = "", val densityBucket: String = "", val fontScale: String = "",
     // CPU
     val cpuCores: Int = 0, val threads: Int = 0, val cpuModel: String = "",
     val freqMinGhz: String = "", val freqMaxGhz: String = "", val arch: String = "",
+    val gpu: String = "", val cpuClusters: String = "",
     // RAM
     val ramTotalKb: Long = 0, val ramAvailKb: Long = 0, val swapTotalKb: Long = 0, val swapFreeKb: Long = 0,
     val ramType: String = "",
@@ -86,6 +88,7 @@ private data class DevInfo(
     val publicIp: String = "", val publicIp6: String = "",
     // 电池
     val batteryPct: Int = 0, val batteryTemp: String = "", val batteryHealth: String = "", val batteryVolt: String = "",
+    val batteryHealthPct: String = "", val batteryHealthVerdict: String = "", val batteryCycles: String = "",
     val loading: Boolean = true,
 )
 
@@ -140,13 +143,18 @@ fun DeviceInfoScreen(ui: AppUi, onClose: () -> Unit) {
                 kv("逻辑尺寸", "${info.widthDp} × ${info.heightDp} dp")
                 kv("像素密度", "${info.densityDpi} dpi（xdpi ${info.xdpi.roundToInt()} / ydpi ${info.ydpi.roundToInt()}）")
                 kv("屏幕对角线", String.format("%.2f 英寸", info.diagonalIn))
-                kv("屏幕占比", String.format("%.2f : 1", if (info.heightDp > 0) info.heightDp.toFloat() / info.widthDp else 0f))
+                kv("屏幕比例", String.format("%.2f : 1", if (info.widthDp > 0) info.heightDp.toFloat() / info.widthDp else 0f))
+                kv("刷新率", info.refreshRate)
+                kv("密度等级", info.densityBucket)
+                kv("字体缩放", info.fontScale)
             }
             // CPU
             InfoCard("处理器", "cpu") {
                 kv("型号", info.cpuModel); kv("架构", info.arch)
                 kv("核心数", "${info.cpuCores} 核"); kv("线程数", "${info.threads} 线程")
                 kv("频率区间", "${info.freqMinGhz} ~ ${info.freqMaxGhz}")
+                kv("核心频率簇", info.cpuClusters)
+                kv("GPU", info.gpu)
             }
             // RAM
             val ramUsedKb = (info.ramTotalKb - info.ramAvailKb).coerceAtLeast(0)
@@ -178,7 +186,9 @@ fun DeviceInfoScreen(ui: AppUi, onClose: () -> Unit) {
             // 电池与系统
             InfoCard("电池与系统", "battery") {
                 kv("电量", "${info.batteryPct}%"); kv("温度", info.batteryTemp)
-                kv("电压", info.batteryVolt); kv("健康度", info.batteryHealth)
+                kv("电压", info.batteryVolt)
+                kv("健康度", info.batteryHealthPct + (if (info.batteryHealthVerdict.isNotBlank()) "（${info.batteryHealthVerdict}）" else ""))
+                kv("状态", info.batteryHealth); kv("循环次数", info.batteryCycles)
             }
         }
     }
@@ -264,8 +274,38 @@ private suspend fun loadDevice(ctx: Context, ui: AppUi): DevInfo {
     }.getOrNull()?.takeIf { it > 0 } ?: Runtime.getRuntime().availableProcessors()
     val fMin = runCatching { ui.sh("cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq").trim().toLong() }.getOrDefault(0L)
     val fMax = runCatching { ui.sh("cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").trim().toLong() }.getOrDefault(0L)
+    // 各核心最高频率 → 按频率分组，得到大小核频率簇（如 4×1.80GHz + 4×2.40GHz）
+    val freqRaw = runCatching { ui.sh("for f in /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq; do cat \$f 2>/dev/null; echo; done") }.getOrDefault("")
+    val freqGroups = freqRaw.lines().mapNotNull { it.trim().toLongOrNull() }.filter { it > 0 }
+        .groupingBy { it }.eachCount().entries.sortedBy { it.key }
+    val cpuClusters = if (freqGroups.isNotEmpty())
+        freqGroups.joinToString(" + ") { "${it.value}×" + String.format("%.2fGHz", it.key / 1_000_000.0) }
+    else "系统未公开"
+    // GPU：EGL 厂商/型号 + OpenGL ES 版本（ro.opengles.version 为 0xMMmmrrrr）
+    val gpuEgl = runCatching { ui.sh("getprop ro.hardware.egl").trim() }.getOrDefault("")
+    val gpuVk = runCatching { ui.sh("getprop ro.hardware.vulkan").trim() }.getOrDefault("")
+    // ro.opengles.version 是十进制整数（0xMMmm 编码，major<<16 | minor）
+    val glesVal = runCatching { ui.sh("getprop ro.opengles.version").trim().toLongOrNull() }.getOrNull() ?: 0L
+    val glesVer = if (glesVal > 0) "OpenGL ES ${(glesVal shr 16) and 0xffff}.${glesVal and 0xffff}" else ""
+    val gpu = listOf(gpuEgl.ifBlank { gpuVk }, glesVer).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "系统未公开" }
     val kernel = runCatching { ui.sh("cat /proc/version").trim() }.getOrDefault(System.getProperty("os.version") ?: "")
         .let { if (it.length > 60) it.substring(0, 60) + "…" else it }
+
+    // 屏幕刷新率/密度等级/字体缩放
+    val refreshHz = runCatching {
+        val dm2 = ctx.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        dm2.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.refreshRate ?: 0f
+    }.getOrDefault(0f)
+    val refreshRate = if (refreshHz > 0f) String.format("%.0f Hz", refreshHz) else "系统未公开"
+    val bucket = when {
+        dm.densityDpi >= 640 -> "xxxhdpi 及以上"
+        dm.densityDpi >= 480 -> "xxhdpi"
+        dm.densityDpi >= 320 -> "xhdpi"
+        dm.densityDpi >= 240 -> "hdpi"
+        dm.densityDpi >= 160 -> "mdpi"
+        else -> "ldpi"
+    }
+    val fontScale = String.format("%.2f（%.0f%%）", ctx.resources.configuration.fontScale, ctx.resources.configuration.fontScale * 100)
 
     // 存储
     val stat = StatFs(Environment.getDataDirectory().path)
@@ -284,12 +324,17 @@ private suspend fun loadDevice(ctx: Context, ui: AppUi): DevInfo {
     val ips = localIps()
     val pubRaw4 = fetchPublicIp("https://api.ipify.org")
     val pubRaw64 = runCatching { fetchPublicIp("https://api64.ipify.org") }.getOrDefault("")
+    val pubV6raw = runCatching { fetchPublicIp("https://api6.ipify.org") }.getOrDefault("")
     val pubV4 = when {
-        pubRaw4.isNotBlank() -> pubRaw4
-        pubRaw64.isNotBlank() && !pubRaw64.contains(":") -> pubRaw64
+        isValidIpv4(pubRaw4) -> pubRaw4
+        isValidIpv4(pubRaw64) -> pubRaw64
         else -> ""
     }
-    val pubV6 = if (pubRaw64.contains(":")) pubRaw64 else ""
+    val pubV6 = when {
+        isValidIpv6(pubV6raw) -> pubV6raw
+        isValidIpv6(pubRaw64) -> pubRaw64
+        else -> ""
+    }
 
     // 电池
     val bm = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
@@ -305,6 +350,23 @@ private suspend fun loadDevice(ctx: Context, ui: AppUi): DevInfo {
         BatteryManager.BATTERY_HEALTH_COLD -> "过冷"
         else -> "未知"
     }
+    // 电池健康度：charge_full / charge_full_design × 100（部分机型不开放则回退 uevent）
+    val battRaw = runCatching { ui.sh("cat /sys/class/power_supply/battery/charge_full_design /sys/class/power_supply/battery/charge_full 2>/dev/null") }.getOrDefault("")
+    val uevent = runCatching { ui.sh("cat /sys/class/power_supply/battery/uevent 2>/dev/null") }.getOrDefault("")
+    val design = battRaw.lines().getOrNull(0)?.trim()?.toLongOrNull()
+        ?: Regex("POWER_SUPPLY_CHARGE_FULL_DESIGN=(\\d+)").find(uevent)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+    val full = battRaw.lines().getOrNull(1)?.trim()?.toLongOrNull()
+        ?: Regex("POWER_SUPPLY_CHARGE_FULL=(\\d+)").find(uevent)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+    val rawHealthPct = if (design > 0 && full > 0 && full <= design * 2) full * 100.0 / design else 0.0
+    val healthPctStr = if (rawHealthPct > 0) String.format("%.0f%%", rawHealthPct) else "无法读取（系统未开放）"
+    val verdict = when {
+        rawHealthPct <= 0 -> ""
+        rawHealthPct >= 90 -> "健康"
+        rawHealthPct >= 80 -> "一般，建议关注"
+        else -> "低于 80%，已达报废标准，建议更换"
+    }
+    val cyclesRaw = runCatching { ui.sh("cat /sys/class/power_supply/battery/cycle_count 2>/dev/null") }.getOrDefault("").trim()
+    val cycles = cyclesRaw.toIntOrNull()?.let { "$it 次" } ?: "系统未公开"
 
     val uptimeMs = SystemClock.elapsedRealtime()
     val h = uptimeMs / 3_600_000; val m = (uptimeMs % 3_600_000) / 60_000
@@ -319,8 +381,10 @@ private suspend fun loadDevice(ctx: Context, ui: AppUi): DevInfo {
         widthPx = wPx, heightPx = hPx,
         widthDp = (wPx / dm.density).roundToInt(), heightDp = (hPx / dm.density).roundToInt(),
         densityDpi = dm.densityDpi, xdpi = xdpi, ydpi = ydpi, diagonalIn = diag.toFloat(),
+        refreshRate = refreshRate, densityBucket = bucket, fontScale = fontScale,
         cpuCores = cpuCores, threads = threads, cpuModel = cpuModel,
         arch = Build.SUPPORTED_ABIS.firstOrNull() ?: "",
+        gpu = gpu, cpuClusters = cpuClusters,
         freqMinGhz = if (fMin > 0) String.format("%.2f GHz", fMin / 1_000_000.0) else "—",
         freqMaxGhz = if (fMax > 0) String.format("%.2f GHz", fMax / 1_000_000.0) else "—",
         ramTotalKb = mi.totalMem / 1024, ramAvailKb = mi.availMem / 1024,
@@ -333,7 +397,7 @@ private suspend fun loadDevice(ctx: Context, ui: AppUi): DevInfo {
         publicIp = pubV4.ifBlank { "获取失败" }, publicIp6 = pubV6.ifBlank { "不可用" },
         batteryVolt = if (volt > 0) String.format("%.2f V", volt / 1000.0) else "—",
         batteryPct = bpct, batteryTemp = String.format("%.1f ℃", tempTenths / 10.0),
-        batteryHealth = health,
+        batteryHealth = health, batteryHealthPct = healthPctStr, batteryHealthVerdict = verdict, batteryCycles = cycles,
         loading = false,
     )
 }
@@ -377,7 +441,18 @@ private fun netTypeOf(ctx: Context): String {
     } catch (e: Exception) { "未知" }
 }
 
-/** 返回 (内网IPv4, 内网IPv6)。 */
+private val IPV4_RE = Regex("^((25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)$")
+private fun isValidIpv4(s: String): Boolean = IPV4_RE.matches(s.trim())
+
+private fun isValidIpv6(s: String): Boolean {
+    val t = s.trim()
+    if (!t.contains(":") || t.contains(" ")) return false
+    // 只允许十六进制与冒号，含折叠 :: 的判断交给 InetAddress 再解析一次
+    if (!Regex("^[0-9a-fA-F:]+$").matches(t)) return false
+    return try { java.net.InetAddress.getByName(t) is java.net.Inet6Address } catch (e: Exception) { false }
+}
+
+/** 返回 (内网IPv4, 内网IPv6)，仅接受合法地址，避免把非地址串误当 IP。 */
 private fun localIps(): Pair<String, String> {
     var v4 = ""; var v6 = ""
     try {
@@ -385,10 +460,10 @@ private fun localIps(): Pair<String, String> {
         for (ni in ifaces) {
             if (!ni.isUp || ni.isLoopback) continue
             for (addr in ni.inetAddresses) {
-                val a = addr.hostAddress ?: continue
                 if (addr.isLoopbackAddress) continue
-                if (!a.contains(":") && addr.isSiteLocalAddress && v4.isBlank()) v4 = a
-                else if (a.contains(":") && !a.lowercase().startsWith("fe80") && v6.isBlank()) v6 = a.substringBefore("%")
+                val a = (addr.hostAddress ?: continue).substringBefore("%")
+                if (addr is java.net.Inet4Address && addr.isSiteLocalAddress && v4.isBlank() && isValidIpv4(a)) v4 = a
+                else if (addr is java.net.Inet6Address && !a.lowercase().startsWith("fe80") && v6.isBlank() && isValidIpv6(a)) v6 = a
             }
         }
     } catch (_: Exception) {}
