@@ -95,7 +95,6 @@ class GuardService : Service() {
         val title = "进程杀手 · $statusText"
         // contentText 保持精简，避免系统被动换行；详细内容在展开大文本里按语义主动换行
         val text = "监控 $scopeText"
-        val last = EventLog.events.value.lastOrNull { it.type == LogType.KILL || it.type == LogType.RULE }
         val cleanTime = if (stats.lastCleanAt > 0)
             SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(stats.lastCleanAt)) else "—"
         val bigText = buildString {
@@ -103,10 +102,6 @@ class GuardService : Service() {
             append("今日拦截：").append(stats.blocked).append(" 次\n")
             append("上次释放：").append(if (stats.lastFreedKb > 0) "$lastMb MB" else "—").append('\n')
             append("上次清理：").append(cleanTime)
-            if (last != null) {
-                append("\n最近：").append(last.title)
-                if (last.detail.isNotBlank()) append(" · ").append(last.detail)
-            }
         }
 
         val contentIntent = PendingIntent.getActivity(
@@ -117,14 +112,15 @@ class GuardService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val toggleIntent = PendingIntent.getService(
+        // 用广播接收器承载按钮动作：避免从通知直接 startService 在部分机型/后台限制下失效
+        val toggleIntent = PendingIntent.getBroadcast(
             this, 1,
-            Intent(this, GuardService::class.java).setAction(ACTION_TOGGLE),
+            Intent(this, GuardActionReceiver::class.java).setAction(ACTION_TOGGLE),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val cleanIntent = PendingIntent.getService(
+        val cleanIntent = PendingIntent.getBroadcast(
             this, 2,
-            Intent(this, GuardService::class.java).setAction(ACTION_CLEAN),
+            Intent(this, GuardActionReceiver::class.java).setAction(ACTION_CLEAN),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 

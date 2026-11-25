@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.PowerSettingsNew
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.StarBorder
@@ -96,6 +97,7 @@ fun icVec(name: String): ImageVector = when (name) {
     "clock" -> Icons.Outlined.Schedule
     "grid" -> Icons.Outlined.DeveloperBoard
     "bell" -> Icons.Outlined.Notifications
+    "settings" -> Icons.Outlined.Settings
     "search" -> Icons.Outlined.Search
     "plus" -> Icons.Outlined.Add
     "check" -> Icons.Outlined.Check

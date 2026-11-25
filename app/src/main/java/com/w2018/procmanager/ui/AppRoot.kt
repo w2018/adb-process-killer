@@ -112,11 +112,14 @@ fun AppRoot() {
     // 前台实时刷新：界面处于前台(RESUMED)时每 2 秒采集一次，实时查看设备性能指标；
     // 退到后台自动停止，避免无谓耗电。
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(Unit) {
+    // 实时采集：仅在界面处于前台(RESUMED)时进行。概览页用 lite 快照 1.2s 高频刷新保证“实时感”；
+    // 其余页面用完整快照 3.5s 刷新，避免高频重算导致列表滚动卡顿与设备额外负载。
+    LaunchedEffect(tab) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                delay(2000)
-                if (!ui.refreshing) runCatching { ui.refresh() }
+                val onDash = tab == Tab.DASH
+                delay(if (onDash) 1200 else 3500)
+                if (!ui.refreshing) runCatching { ui.refresh(lite = onDash) }
             }
         }
     }
@@ -170,7 +173,7 @@ private fun ProcTabBar(current: Tab, onSelect: (Tab) -> Unit) {
         Modifier.fillMaxWidth().height(66.dp).background(C.bg2),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Tab.entries.forEach { t ->
+        Tab.entries.filter { it != Tab.SET }.forEach { t ->
             val on = t == current
             val tint by animateColorAsState(if (on) C.accent else C.muted, animationSpec = tween(180), label = "tabTint")
             val iconScale by animateFloatAsState(if (on) 1.12f else 1f, animationSpec = tween(180), label = "tabScale")

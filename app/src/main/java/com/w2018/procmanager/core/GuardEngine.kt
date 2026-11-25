@@ -281,7 +281,8 @@ class GuardEngine(private val app: ProcApp) {
                 )
             }
             app.stats.addBlocked(chosen.size, freed)
-            if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "约释放 ${freed / 1024}MB · 看门狗自动执行")
+            if (app.settings.notifyKillList) notifyKillList(chosen.values.map { label(it.pkg) }, freed)
+            else if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "约释放 ${freed / 1024}MB · 看门狗自动执行")
             return chosen.size
         }
         return 0
@@ -384,6 +385,7 @@ class GuardEngine(private val app: ProcApp) {
             EventLog.add(LogType.KILL, "已清理 ${label(c.pkg)}", "${c.reason} · 约释放 ${c.freedKb / 1024}MB")
         }
         app.stats.addBlocked(chosen.size, freed)
+        if (app.settings.notifyKillList) notifyKillList(chosen.map { label(it.pkg) }, freed)
         return chosen.size to freed
     }
 
@@ -418,6 +420,7 @@ class GuardEngine(private val app: ProcApp) {
             if (r.ok || r.exitCode == 0) {
                 app.stats.addBlocked(seen.size, freed)
                 EventLog.add(LogType.KILL, "一键清理", "清理 ${seen.size} 个进程，约释放 ${freed / 1024}MB")
+                if (app.settings.notifyKillList) notifyKillList(seen.map { label(it) }, freed)
             }
             return seen.size to freed
         } finally {
@@ -443,6 +446,33 @@ class GuardEngine(private val app: ProcApp) {
         if (ai == null) return explicitlyMonitored || perAppEnabled
         // 用户应用：全量模式默认全管，或显式勾选 / 启用单应用规则。
         return app.settings.monitorMode == "all" || explicitlyMonitored || perAppEnabled
+    }
+
+    /** 「通知栏提示关闭的应用清单」：每次清理后单独发一条通知，列出本次关闭的应用。 */
+    private fun notifyKillList(labels: List<String>, freed: Long) {
+        if (!app.settings.notifyKillList) return
+        val names = labels.filter { it.isNotBlank() }.distinct()
+        if (names.isEmpty()) return
+        runCatching {
+            val nm = app.getSystemService(NotificationManager::class.java) ?: return
+            val chId = "guard_events"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm.getNotificationChannel(chId) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(chId, "清理提醒", NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) }
+                )
+            }
+            val shown = names.take(20).joinToString("、")
+            val listText = if (names.size > 20) "$shown 等 ${names.size} 个应用" else shown
+            val n = NotificationCompat.Builder(app, chId)
+                .setSmallIcon(com.w2018.procmanager.R.drawable.ic_launcher)
+                .setContentTitle("本次清理 ${names.size} 个应用 · 约释放 ${freed / 1024} MB")
+                .setContentText(listText)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(listText))
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(3100, n)
+        }
     }
 
     /** 执行动作后的轻量通知（受「状态通知」开关控制）。 */

@@ -26,6 +26,7 @@ data class Cfg(
     val watchdog: Boolean,
     val autoStart: Boolean,
     val notify: Boolean,
+    val notifyKillList: Boolean = true,
     val aliveStop: Boolean,
     val bgStop: Boolean,
     val wakeBlock: Boolean,
@@ -55,7 +56,7 @@ data class Cfg(
 ) {
     companion object {
         fun from(s: SettingsStore) = Cfg(
-            s.guardian, s.watchdog, s.autoStart, s.notify,
+            s.guardian, s.watchdog, s.autoStart, s.notify, s.notifyKillList,
             s.aliveStop, s.bgStop, s.wakeBlock, s.freqProtect,
             s.lockLowPower, s.screenOffSave, s.chargeExempt, s.nightMode,
             s.memThreshold, s.bgMinutes, s.cpuThreshold, s.cooldownSec,
@@ -67,7 +68,7 @@ data class Cfg(
 
         fun write(s: SettingsStore, c: Cfg) {
             s.guardian = c.guardian; s.watchdog = c.watchdog
-            s.autoStart = c.autoStart; s.notify = c.notify
+            s.autoStart = c.autoStart; s.notify = c.notify; s.notifyKillList = c.notifyKillList
             s.aliveStop = c.aliveStop; s.bgStop = c.bgStop
             s.wakeBlock = c.wakeBlock; s.freqProtect = c.freqProtect
             s.lockLowPower = c.lockLowPower; s.screenOffSave = c.screenOffSave
@@ -143,12 +144,12 @@ class AppUi(val app: ProcApp) {
 
     fun reloadStats() { blocked = app.stats.blocked; freedKb = app.stats.freedKb; lastFreedKb = app.stats.lastFreedKb }
 
-    suspend fun refresh() {
+    suspend fun refresh(lite: Boolean = false) {
         refreshing = true
         try {
-            snapshot = app.repo.snapshot()
+            snapshot = app.repo.snapshot(lite = lite)
             frozen = app.settings.frozenPkgs
-            disabledApps = runCatching { app.repo.disabledApps() }.getOrDefault(emptyList())
+            if (!lite) disabledApps = runCatching { app.repo.disabledApps() }.getOrDefault(emptyList())
         } catch (_: Throwable) {}
         shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
         monitored = app.settings.monitored
@@ -210,14 +211,33 @@ class AppUi(val app: ProcApp) {
 
     fun applyPreset(p: String) = setCfg {
         when (p) {
-            "save" -> it.copy(preset = p, mem = 200, bgTime = 8, cpu = 20)
-            "perf" -> it.copy(preset = p, mem = 300, bgTime = 2, cpu = 25)
-            else -> it.copy(preset = "balance", mem = 150, bgTime = 5, cpu = 15)
+            // 省电：阈值更宽松、少打扰、低频清理，关闭激进的缓存放行规则
+            "save" -> it.copy(
+                preset = "save", mem = 250, bgTime = 10, cpu = 25, cooldown = 30, buffer = 5,
+                memStop = true, cpuStop = false, cacheClean = false, cacheIdle = 15,
+                memPressureRule = false, boostRule = false,
+            )
+            // 性能：阈值更紧、更积极清理保流畅与降温，开启缓存/内存压力/低电高温加速清理
+            "perf" -> it.copy(
+                preset = "perf", mem = 120, bgTime = 3, cpu = 12, cooldown = 15, buffer = 1,
+                memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 5,
+                memPressureRule = true, memPressurePct = 20, boostRule = true, boostBattery = 25, boostTemp = 42,
+            )
+            // 均衡：默认推荐，各规则适度开启
+            else -> it.copy(
+                preset = "balance", mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3,
+                memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 10,
+                memPressureRule = true, memPressurePct = 15, boostRule = true, boostBattery = 20, boostTemp = 45,
+            )
         }
     }
 
     fun resetRules() = setCfg {
-        it.copy(mem = 150, bgTime = 5, cpu = 15, cooldown = 30, preset = "balance")
+        it.copy(
+            mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3, preset = "balance",
+            memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 10,
+            memPressureRule = true, memPressurePct = 15, boostRule = true, boostBattery = 20, boostTemp = 45,
+        )
     }
 
     fun toggleMonitor(pkg: String) {

@@ -25,6 +25,9 @@ class SettingsStore(context: Context) {
         get() = b("sw_autostart", true); set(v) = ib("sw_autostart", v)
     var notify: Boolean
         get() = b("sw_notify", true); set(v) = ib("sw_notify", v)
+    /** 通知栏提示本次任务关闭的应用清单（每次清理单独弹一条通知）。 */
+    var notifyKillList: Boolean
+        get() = b("sw_notifyKillList", true); set(v) = ib("sw_notifyKillList", v)
 
     // ---- 立即停止规则 ----
     var aliveStop: Boolean

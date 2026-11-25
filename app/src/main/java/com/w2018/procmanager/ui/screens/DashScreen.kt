@@ -126,7 +126,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                     )
                 }
             }
-            IconBtn("bell", badge = ui.logs.any { it.type == com.w2018.procmanager.core.LogType.KILL || it.type == com.w2018.procmanager.core.LogType.RULE }) { onOpenLogs("kill") }
+            IconBtn("settings", badge = false) { onOpenSettings() }
         }
 
         // 未连接提示条

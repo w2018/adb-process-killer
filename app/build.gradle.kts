@@ -20,8 +20,8 @@ android {
         applicationId = "com.w2018.procmanager"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.2.0"
+        versionCode = 12
+        versionName = "0.2.1"
         // 无原生库，保持全 ABI 以兼容 arm/x86 模拟器
     }
 
