@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -322,12 +323,16 @@ private fun FreezeManageDialog(ui: AppUi, ctx: android.content.Context, onClose:
     val toast = LocalToast.current
     val scope = rememberCoroutineScope()
     var mode by remember { mutableStateOf("frozen") } // frozen | disabled | all
+    var q by remember { mutableStateOf("") }
     val apps = ui.snapshot?.apps ?: emptyList()
     val disabled = ui.disabledApps
-    val shown: List<AppInfo> = when (mode) {
+    val query = q.trim()
+    val shown: List<AppInfo> = (when (mode) {
         "frozen" -> apps.filter { ui.isFrozen(it.packageName) }
         "disabled" -> disabled
         else -> apps
+    }).filter {
+        query.isEmpty() || it.label.contains(query, ignoreCase = true) || it.packageName.contains(query, ignoreCase = true)
     }
     Dialog(onDismissRequest = onClose) {
         Box(
@@ -344,6 +349,14 @@ private fun FreezeManageDialog(ui: AppUi, ctx: android.content.Context, onClose:
                     Chip("已停用 ${disabled.size}", mode == "disabled") { mode = "disabled" }
                     Chip("全部应用", mode == "all") { mode = "all" }
                 }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = q, onValueChange = { q = it },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    placeholder = { Text("搜索应用名称或包名", color = C.muted, fontSize = 12.sp) },
+                    leadingIcon = { Ic("search", 16, C.muted) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = C.text),
+                )
                 Spacer(Modifier.height(10.dp))
                 if (shown.isEmpty()) {
                     Text(

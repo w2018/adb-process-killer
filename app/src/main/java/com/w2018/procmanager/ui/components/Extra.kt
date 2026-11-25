@@ -49,14 +49,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -149,12 +157,18 @@ fun avatarColor(pkg: String): Color {
 fun avatarLetter(label: String, pkg: String): String =
     label.firstOrNull()?.toString() ?: pkg.firstOrNull()?.toString()?.uppercase() ?: "?"
 
-/** 应用真实图标（PackageManager 读取 launcher icon），失败时回退到首字母头像。 */
-@Composable
-fun AppIcon(pkg: String, label: String, size: Int = 40) {
-    val ctx = LocalContext.current
-    val bmp = remember(pkg, size) {
-        runCatching {
+/** 应用图标内存缓存：避免滚动时对每个新行在主线程做 PackageManager IPC + Bitmap 解码造成卡顿。 */
+private object IconCache {
+    private val cache = LruCache<String, ImageBitmap>(160)
+    private val missing = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    )
+    fun get(pkg: String): ImageBitmap? = cache.get(pkg)
+    fun isMissing(pkg: String): Boolean = missing.contains(pkg)
+    fun load(ctx: android.content.Context, pkg: String): ImageBitmap? {
+        cache.get(pkg)?.let { return it }
+        if (missing.contains(pkg)) return null
+        return runCatching {
             val d = ctx.packageManager.getApplicationIcon(pkg)
             val w = if (d.intrinsicWidth > 0) d.intrinsicWidth else 96
             val h = if (d.intrinsicHeight > 0) d.intrinsicHeight else 96
@@ -163,12 +177,24 @@ fun AppIcon(pkg: String, label: String, size: Int = 40) {
             d.setBounds(0, 0, w, h)
             d.draw(c)
             b.asImageBitmap()
-        }.getOrNull()
+        }.getOrNull().also { if (it == null) missing.add(pkg) else cache.put(pkg, it) }
+    }
+}
+
+/** 应用真实图标（PackageManager 读取 launcher icon）。图标在 IO 线程解码并内存缓存，主线程不阻塞滚动。 */
+@Composable
+fun AppIcon(pkg: String, label: String, size: Int = 40) {
+    val ctx = LocalContext.current
+    var bmp by remember(pkg) { mutableStateOf(IconCache.get(pkg)) }
+    LaunchedEffect(pkg) {
+        if (bmp == null && !IconCache.isMissing(pkg)) {
+            bmp = withContext(Dispatchers.IO) { IconCache.load(ctx, pkg) }
+        }
     }
     val shape = RoundedCornerShape((size / 4).dp)
     if (bmp != null) {
         Image(
-            bitmap = bmp, contentDescription = label, contentScale = ContentScale.Fit,
+            bitmap = bmp!!, contentDescription = label, contentScale = ContentScale.Fit,
             modifier = Modifier.size(size.dp).clip(shape),
         )
     } else {

@@ -206,10 +206,8 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(sorted, key = { it.packageName }) { a ->
-                    Box(Modifier.animateItem()) {
-                        AppRow(ui, a, agg[a.packageName], onOpenApp)
-                    }
+                items(sorted, key = { it.packageName }, contentType = { "app" }) { a ->
+                    AppRow(ui, a, agg[a.packageName], onOpenApp)
                 }
                 item {
                     Text("只读进程信息 · 冻结/终止均为无风险操作，系统关键应用已禁用冻结",

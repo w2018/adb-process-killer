@@ -25,6 +25,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * 前台常驻通知服务：展示守护状态/监控数/今日拦截·释放内存，并提供暂停恢复、一键清理快捷操作。
@@ -87,16 +90,19 @@ class GuardService : Service() {
         val monitored = app.settings.monitored.size
         val paused = GuardRuntime.paused.value
         val statusText = if (paused) "已暂停" else "守护中"
-        val freedMb = stats.freedKb / 1024
+        val lastMb = stats.lastFreedKb / 1024
         val scopeText = if (app.settings.monitorMode == "all") "全部应用" else "$monitored 个应用"
         val title = "进程杀手 · $statusText"
         // contentText 保持精简，避免系统被动换行；详细内容在展开大文本里按语义主动换行
         val text = "监控 $scopeText"
         val last = EventLog.events.value.lastOrNull { it.type == LogType.KILL || it.type == LogType.RULE }
+        val cleanTime = if (stats.lastCleanAt > 0)
+            SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(Date(stats.lastCleanAt)) else "—"
         val bigText = buildString {
             append("监控范围：").append(scopeText).append('\n')
             append("今日拦截：").append(stats.blocked).append(" 次\n")
-            append("释放内存：").append(freedMb).append(" MB")
+            append("上次释放：").append(if (stats.lastFreedKb > 0) "$lastMb MB" else "—").append('\n')
+            append("上次清理：").append(cleanTime)
             if (last != null) {
                 append("\n最近：").append(last.title)
                 if (last.detail.isNotBlank()) append(" · ").append(last.detail)
