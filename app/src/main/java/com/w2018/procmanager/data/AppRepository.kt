@@ -1,5 +1,6 @@
 package com.w2018.procmanager.data
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -16,6 +17,14 @@ import kotlinx.coroutines.withContext
  * 应用/进程数据仓库。通过 PackageManager 取应用元数据，通过 shell(ps/top/dumpsys/meminfo)
  * 取进程、CPU、内存。所有采集在 IO 线程执行。
  */
+/** 一个开机自启广播接收器组件。 */
+data class BootReceiverInfo(
+    val pkg: String,
+    /** 组件全名：pkg/className */
+    val component: String,
+    val enabled: Boolean
+)
+
 class AppRepository(
     private val context: Context,
     private val channels: ChannelManager
@@ -37,7 +46,8 @@ class AppRepository(
                 .getOrDefault(p.packageName)
             val autoStart = runCatching {
                 pm.queryBroadcastReceivers(
-                    Intent(Intent.ACTION_BOOT_COMPLETED).setPackage(p.packageName), 0
+                    Intent(Intent.ACTION_BOOT_COMPLETED).setPackage(p.packageName),
+                    PackageManager.MATCH_DISABLED_COMPONENTS
                 ).isNotEmpty()
             }.getOrDefault(false)
             list.add(AppInfo(p.packageName, label, isSystem, ai.uid, autoStart))
@@ -49,6 +59,51 @@ class AppRepository(
 
     fun appMap(): Map<String, AppInfo> =
         appCache?.associateBy { it.packageName } ?: emptyMap()
+
+    /**
+     * 列出所有声明了 BOOT_COMPLETED 的广播接收器组件及其启用状态（含被禁用的）。
+     * 用于「自启动治理」：禁止/恢复开机自启 = 禁用/启用这些接收器组件（不冻结应用）。
+     */
+    suspend fun bootReceivers(): List<BootReceiverInfo> = withContext(Dispatchers.IO) {
+        val pm = context.packageManager
+        val list = runCatching {
+            pm.queryBroadcastReceivers(
+                Intent(Intent.ACTION_BOOT_COMPLETED),
+                PackageManager.MATCH_DISABLED_COMPONENTS
+            )
+        }.getOrDefault(emptyList())
+        val out = ArrayList<BootReceiverInfo>()
+        for (ri in list) {
+            val ai = ri.activityInfo ?: continue
+            val pkg = ai.packageName ?: continue
+            val cls = ai.name ?: continue
+            if (cls.isBlank()) continue
+            val st = runCatching {
+                pm.getComponentEnabledSetting(ComponentName(pkg, cls))
+            }.getOrDefault(PackageManager.COMPONENT_ENABLED_STATE_DEFAULT)
+            val enabled = st == PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
+                st == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            out.add(BootReceiverInfo(pkg, "$pkg/$cls", enabled))
+        }
+        out
+    }
+
+    /** 已被 AppOps 限制后台运行（RUN_ANY_IN_BACKGROUND=ignore）的包名集合。 */
+    suspend fun bgRestrictedPkgs(): Set<String> {
+        val r = channels.run("cmd appops query-op RUN_ANY_IN_BACKGROUND ignore", 8000)
+        if (!(r.ok || r.exitCode == 0)) return emptySet()
+        return r.stdout.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.contains(' ') }
+            .toSet()
+    }
+
+    /** 通过 AppOps 限制/恢复某应用后台运行（禁止开机自启的效果，但不冻结、不改组件）。 */
+    suspend fun setBgRestricted(pkg: String, restricted: Boolean): Boolean {
+        val mode = if (restricted) "ignore" else "default"
+        val r = channels.run("cmd appops set $pkg RUN_ANY_IN_BACKGROUND $mode", 8000)
+        return r.ok || r.exitCode == 0
+    }
 
     /** 当前被冻结（disabled）的包名集合，用于恢复冻结状态展示。 */
     suspend fun disabledPackages(): Set<String> = withContext(Dispatchers.IO) {

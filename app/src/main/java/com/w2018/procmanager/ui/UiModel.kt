@@ -8,6 +8,7 @@ import com.w2018.procmanager.core.EventHub
 import com.w2018.procmanager.core.EventLog
 import com.w2018.procmanager.core.LogEvent
 import com.w2018.procmanager.core.rule.KillCandidate
+import com.w2018.procmanager.data.BootReceiverInfo
 import com.w2018.procmanager.data.model.AppInfo
 import com.w2018.procmanager.data.SettingsStore
 import com.w2018.procmanager.data.model.Snapshot
@@ -103,6 +104,10 @@ class AppUi(val app: ProcApp) {
     var whitelist by mutableStateOf(app.settings.whitelist); private set
     var bgStopSet by mutableStateOf(app.settings.bgStopPkgs); private set
     var frozen by mutableStateOf<Set<String>>(app.settings.frozenPkgs); private set
+    /** 开机自启广播接收器（仅用于列出「自启动治理」候选应用）。 */
+    var bootReceivers by mutableStateOf<List<BootReceiverInfo>>(emptyList()); private set
+    /** 已被 AppOps 限制后台运行（禁止自启）的包名集合。 */
+    var bgRestricted by mutableStateOf<Set<String>>(emptySet()); private set
     var logs by mutableStateOf<List<LogEvent>>(emptyList()); private set
     var blocked by mutableStateOf(0); private set
     var freedKb by mutableStateOf(0L); private set
@@ -247,6 +252,23 @@ class AppUi(val app: ProcApp) {
     /** 已冻结应用列表。 */
     fun frozenApps(): List<AppInfo> =
         (snapshot?.apps ?: emptyList()).filter { frozen.contains(it.packageName) }
+
+    /** 刷新开机自启接收器列表与后台限制状态。 */
+    fun refreshBoot() = scope.launch {
+        bootReceivers = runCatching { app.repo.bootReceivers() }.getOrDefault(emptyList())
+        bgRestricted = runCatching { app.repo.bgRestrictedPkgs() }.getOrDefault(emptySet())
+    }
+
+    /** 该应用是否已禁止开机自启（其后台运行已被 AppOps 限制）。 */
+    fun isAutoStartBlocked(pkg: String): Boolean = bgRestricted.contains(pkg)
+
+    /** 禁止/恢复开机自启：通过 AppOps 限制/恢复该应用后台运行（不冻结、不改组件）。 */
+    suspend fun setAutoStartBlocked(pkg: String, blocked: Boolean): Boolean {
+        if (!channelReady) return false
+        val ok = app.repo.setBgRestricted(pkg, blocked)
+        refreshBoot()
+        return ok
+    }
 
     suspend fun killApp(pkg: String, label: String): Boolean {
         if (!channelReady) return false

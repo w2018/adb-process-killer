@@ -168,14 +168,21 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("全部", filter == "all") { filter = "all" }
-            Chip("用户应用", filter == "user") { filter = "user" }
-            Chip("系统应用", filter == "sys") { filter = "sys" }
-            Chip("已监控 ${if (ui.cfg.monitorMode == "all") apps.count { !it.isSystem } else ui.monitored.size}", filter == "mon") { filter = "mon" }
-            Chip("运行中", filter == "run") { filter = "run" }
-            Chip("已冻结", filter == "frozen") { filter = "frozen" }
-            Chip("自启动", filter == "auto") { filter = "auto" }
-            Chip("有规则", filter == "rule") { filter = "rule" }
+            val cUser = apps.count { !it.isSystem }
+            val cSys = apps.count { it.isSystem }
+            val cMon = if (ui.cfg.monitorMode == "all") cUser else ui.monitored.size
+            val cRun = apps.count { agg.containsKey(it.packageName) }
+            val cFrozen = apps.count { ui.isFrozen(it.packageName) }
+            val cAuto = apps.count { it.autoStart }
+            val cRule = apps.count { ui.app.settings.hasPerAppRule(it.packageName) || ui.bgStopSet.contains(it.packageName) }
+            Chip("全部 ${apps.size}", filter == "all") { filter = "all" }
+            Chip("用户应用 $cUser", filter == "user") { filter = "user" }
+            Chip("系统应用 $cSys", filter == "sys") { filter = "sys" }
+            Chip("已监控 $cMon", filter == "mon") { filter = "mon" }
+            Chip("运行中 $cRun", filter == "run") { filter = "run" }
+            Chip("已冻结 $cFrozen", filter == "frozen") { filter = "frozen" }
+            Chip("自启动 $cAuto", filter == "auto") { filter = "auto" }
+            Chip("有规则 $cRule", filter == "rule") { filter = "rule" }
         }
         Spacer(Modifier.height(10.dp))
         if (list.isEmpty()) {

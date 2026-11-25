@@ -26,6 +26,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -248,9 +249,9 @@ fun SettingsScreen(ui: AppUi) {
         SetGroupCard {
             RowItem("star", "白名单管理", "永不清理的应用", "${ui.whitelist.size} 个") { showWhite = true }
             SetDivider()
-            RowItem("power", "自启动治理", "开机自启应用，可冻结不常用项", "") { showAutoStart = true }
+            RowItem("power", "自启动治理", "禁止应用开机自启，减少后台占用", "") { showAutoStart = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.1.6 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.1.7 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -334,6 +335,7 @@ private fun WhitelistDialog(ui: AppUi, onClose: () -> Unit) {
 @Composable
 private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { ui.refreshBoot() }
     val snap = ui.snapshot
     val memMap = remember(snap) {
         val m = HashMap<String, Long>()
@@ -342,26 +344,28 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
         }
         m
     }
+    val bootPkgs = ui.bootReceivers.map { it.pkg }.toSet()
     val autoApps = (snap?.apps ?: emptyList())
-        .filter { it.autoStart && !it.isSystem && it.packageName != ui.app.packageName }
+        .filter { !it.isSystem && it.packageName != ui.app.packageName && (it.autoStart || it.packageName in bootPkgs) }
         .sortedByDescending { memMap[it.packageName] ?: 0L }
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
             Text("自启动治理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("监听开机自启的应用共 ${autoApps.size} 个 · 按内存排序；冻结不常用项可减少自启与后台占用", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+            Text("禁止自启 = 用系统 AppOps 限制其后台运行（不改动应用、不冻结，可随时恢复）· 共 ${autoApps.size} 个自启应用，按内存排序", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(autoApps, key = { it.packageName }) { a ->
                     val mem = (memMap[a.packageName] ?: 0L) / 1024
-                    val frozen = ui.isFrozen(a.packageName)
+                    val blocked = ui.isAutoStartBlocked(a.packageName)
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(a.label, color = C.text, fontSize = 13.sp, maxLines = 1)
                             Text("${a.packageName} · ${mem}MB", color = C.muted, fontSize = 9.5.sp, maxLines = 1)
                         }
-                        TagC(if (frozen) "已冻结" else "未冻结", if (frozen) C.warn else C.muted)
+                        TagC(if (blocked) "已禁止自启" else "允许自启", if (blocked) C.warn else C.accent)
+
                         Spacer(Modifier.width(8.dp))
-                        MiniAction(if (frozen) "恢复" else "冻结") {
-                            scope.launch { ui.freezeApp(a.packageName, !frozen) }
+                        MiniAction(if (blocked) "恢复自启" else "禁止自启") {
+                            scope.launch { ui.setAutoStartBlocked(a.packageName, !blocked) }
                         }
                     }
                 }
@@ -386,7 +390,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.1.6", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.1.7", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",
