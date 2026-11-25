@@ -28,7 +28,14 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMGR=$(ls "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1)
+          echo "sdkmanager=$SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+          "$SDKMGR" --install "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null
 
       - name: Prepare local.properties / signing
         run: |
