@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,8 +44,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,6 +99,7 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
     var filter by rememberSaveable { mutableStateOf("all") }
     var search by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf("default") }
+    val scope = rememberCoroutineScope()
     val snap = ui.snapshot
     val apps = snap?.apps ?: emptyList()
     val procs = snap?.processes ?: emptyList()
@@ -192,7 +197,6 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val cUser = apps.count { !it.isSystem }
             val cSys = apps.count { it.isSystem }
-            val cMon = if (ui.cfg.monitorMode == "all") cUser else ui.monitored.size
             val cRun = apps.count { agg.containsKey(it.packageName) }
             val cFrozen = apps.count { ui.isFrozen(it.packageName) }
             val cAuto = apps.count { it.autoStart }
@@ -200,27 +204,54 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             Chip("全部 ${apps.size}", filter == "all") { filter = "all" }
             Chip("用户应用 $cUser", filter == "user") { filter = "user" }
             Chip("系统应用 $cSys", filter == "sys") { filter = "sys" }
-            Chip("已监控 $cMon", filter == "mon") { filter = "mon" }
             Chip("运行中 $cRun", filter == "run") { filter = "run" }
             Chip("已冻结 $cFrozen", filter == "frozen") { filter = "frozen" }
             Chip("自启动 $cAuto", filter == "auto") { filter = "auto" }
             Chip("有规则 $cRule", filter == "rule") { filter = "rule" }
         }
         Spacer(Modifier.height(10.dp))
-        if (list.isEmpty()) {
-            Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
-        } else {
-            LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(sorted, key = { it.packageName }, contentType = { "app" }) { a ->
-                    AppRow(ui, a, agg[a.packageName], onOpenApp)
-                }
-                item {
-                    Text("只读进程信息 · 冻结/终止均为无风险操作，系统关键应用已禁用冻结",
-                        color = C.muted, fontSize = 10.sp,
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        val showFab by remember { derivedStateOf { listState.firstVisibleItemIndex > 4 } }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            if (list.isEmpty()) {
+                Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(24.dp))
+            } else {
+                LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sorted, key = { it.packageName }, contentType = { "app" }) { a ->
+                        AppRow(ui, a, agg[a.packageName], onOpenApp)
+                    }
+                    item {
+                        Text("只读进程信息 · 冻结/终止均为无风险操作，系统关键应用已禁用冻结",
+                            color = C.muted, fontSize = 10.sp,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                    }
                 }
             }
+            // 右下角「回到顶部」浮动按钮（向量绘制图标，无文字）
+            if (showFab) {
+                BackToTopButton(
+                    Modifier.align(Alignment.BottomEnd).padding(end = 6.dp, bottom = 18.dp),
+                ) { scope.launch { listState.animateScrollToItem(0) } }
+            }
+        }
+    }
+}
+
+/** 右下角圆形的「回到顶部」按钮，图标用 Canvas 矢量绘制（非文字）。 */
+@Composable
+private fun BackToTopButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier.size(46.dp).clip(RoundedCornerShape(50)).background(C.accent)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(22.dp)) {
+            val w = size.width; val h = size.height
+            val sw = w * 0.13f
+            val c = C.onAccent
+            drawLine(c, start = Offset(w * 0.5f, h * 0.84f), end = Offset(w * 0.5f, h * 0.2f), strokeWidth = sw, cap = StrokeCap.Round)
+            drawLine(c, start = Offset(w * 0.5f, h * 0.2f), end = Offset(w * 0.24f, h * 0.46f), strokeWidth = sw, cap = StrokeCap.Round)
+            drawLine(c, start = Offset(w * 0.5f, h * 0.2f), end = Offset(w * 0.76f, h * 0.46f), strokeWidth = sw, cap = StrokeCap.Round)
         }
     }
 }
@@ -251,6 +282,17 @@ private fun AppRow(ui: AppUi, a: AppInfo, p: ProcAgg?, onOpen: (String) -> Unit)
                 TagC(if (a.isSystem) "系统" else "用户", if (a.isSystem) C.purple else C.blue)
                 if (ui.cfg.monitorMode == "selected" && monitored) { Spacer(Modifier.width(4.dp)); TagC("监控中", C.accent) }
                 if (frozen) { Spacer(Modifier.width(4.dp)); TagC("已冻结", C.warn) }
+                // 优化标签（最多 1 个，保持单行不换行）
+                val memMb = (p?.memKb ?: 0) / 1024
+                val killN = ui.killCounts[a.packageName] ?: 0
+                val blocked = ui.isAutoStartBlocked(a.packageName)
+                val opt = when {
+                    memMb >= 200 -> "高占用" to C.danger
+                    a.autoStart && !blocked && !frozen -> "可自启" to C.warn
+                    killN >= 3 -> "常清理" to C.danger
+                    else -> null
+                }
+                if (opt != null) { Spacer(Modifier.width(4.dp)); TagC(opt.first, opt.second) }
             }
             Text(a.packageName, color = C.muted, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {

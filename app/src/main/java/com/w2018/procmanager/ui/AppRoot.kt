@@ -1,13 +1,9 @@
 package com.w2018.procmanager.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +17,9 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Home
@@ -35,11 +34,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -68,6 +66,7 @@ import com.w2018.procmanager.ui.screens.SettingsScreen
 import com.w2018.procmanager.ui.theme.C
 import com.w2018.procmanager.ui.theme.ScaledContent
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
     DASH("概览", Icons.Filled.Home),
@@ -85,16 +84,34 @@ fun AppRoot() {
     val app = context.applicationContext as ProcApp
     val ui = remember { AppUi(app) }
     val scope = rememberCoroutineScope()
-    // 记住每个 Tab 的界面状态（滚动位置/筛选/搜索等），切换 Tab 再回来不丢失
-    val tabStateHolder = rememberSaveableStateHolder()
     val activity = context as? android.app.Activity
+
+    // 底部可切换的 4 个主页（设置页改为从首页右上角进入，不再占底部 Tab）
+    val pages = remember { listOf(Tab.DASH, Tab.APPS, Tab.RULES, Tab.RANK) }
+    val pagerState = rememberPagerState(pageCount = { pages.size })
 
     var tab by remember { mutableStateOf(Tab.DASH) }
     var sheetPkg by remember { mutableStateOf<String?>(null) }
     var logFilterReq by remember { mutableStateOf<String?>(null) }
     var showLogs by remember { mutableStateOf(false) }
     var showDevice by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
+
+    fun selectTab(t: Tab) {
+        val i = pages.indexOf(t)
+        if (i >= 0) scope.launch { pagerState.animateScrollToPage(i) }
+    }
+
+    // 左右滑动切换：Pager 负责手势（子页面内横向滚动会优先消费手势），滑动到哪页 Tab 同步到哪页
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.currentPage }.collect { p -> tab = pages.getOrElse(p) { Tab.DASH } }
+    }
+    // Tab 栏点击 / 程序内切换 → 滚动到对应页
+    LaunchedEffect(tab) {
+        val i = pages.indexOf(tab)
+        if (i >= 0 && pagerState.currentPage != i) pagerState.animateScrollToPage(i)
+    }
 
     LaunchedEffect(Unit) {
         ui.observe(scope)
@@ -102,7 +119,6 @@ fun AppRoot() {
         ui.ensureShizuku()
         ui.autoConnect()
         ui.refresh()
-        // Android 13+ 运行时申请通知权限（前台保活通知与清理提醒依赖它）
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             val perm = android.Manifest.permission.POST_NOTIFICATIONS
             if (androidx.core.content.ContextCompat.checkSelfPermission(context, perm)
@@ -112,15 +128,10 @@ fun AppRoot() {
             }
         }
     }
-    // 通道动作结果 → 自绘 Toast
     LaunchedEffect(ui.message) {
         ui.message?.let { m -> toast.show(m); ui.message = null }
     }
-    // 前台实时刷新：界面处于前台(RESUMED)时每 2 秒采集一次，实时查看设备性能指标；
-    // 退到后台自动停止，避免无谓耗电。
     val lifecycleOwner = LocalLifecycleOwner.current
-    // 实时采集：仅在界面处于前台(RESUMED)时进行。概览页用 lite 快照 1.2s 高频刷新保证“实时感”；
-    // 其余页面用完整快照 3.5s 刷新，避免高频重算导致列表滚动卡顿与设备额外负载。
     LaunchedEffect(tab) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
@@ -136,8 +147,9 @@ fun AppRoot() {
             scanning -> scanning = false
             showLogs -> showLogs = false
             showDevice -> showDevice = false
+            showSettings -> showSettings = false
             sheetPkg != null -> sheetPkg = null
-            tab != Tab.DASH -> tab = Tab.DASH
+            tab != Tab.DASH -> selectTab(Tab.DASH)
             else -> activity?.finish()
         }
     }
@@ -147,40 +159,34 @@ fun AppRoot() {
             ScaledContent {
                 Box(Modifier.fillMaxSize().background(C.bg)) {
                     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
-                        Box(Modifier.weight(1f).fillMaxWidth()) {
-                            AnimatedContent(
-                                targetState = tab,
-                                transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(140)) },
-                                label = "tabContent",
-                            ) { t ->
-                                tabStateHolder.SaveableStateProvider(t.name) {
-                                    when (t) {
-                                        Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true }, onOpenDevice = { showDevice = true })
-                                        Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
-                                        Tab.RULES -> RulesScreen(ui)
-                                        Tab.RANK -> RankScreen(ui) { sheetPkg = it }
-                                        Tab.SET -> SettingsScreen(ui)
-                                    }
-                                }
+                        HorizontalPager(state = pagerState, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
+                            when (pages[page]) {
+                                Tab.DASH -> DashScreen(ui, onOpenSettings = { showSettings = true }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true }, onOpenDevice = { showDevice = true })
+                                Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
+                                Tab.RULES -> RulesScreen(ui)
+                                Tab.RANK -> RankScreen(ui) { sheetPkg = it }
+                                else -> {}
                             }
                         }
-                        ProcTabBar(current = tab, onSelect = { tab = it })
+                        ProcTabBar(current = tab, rulesDirty = ui.rulesDirty, onSelect = { selectTab(it) })
                     }
-                    // 事件日志（全屏覆盖，由首页「最近事件-全部」或事件项进入）
+                    // 设置页（全屏覆盖，从首页右上角进入）
+                    if (showSettings) {
+                        Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding().navigationBarsPadding()) {
+                            SettingsScreen(ui)
+                        }
+                    }
                     if (showLogs) {
                         Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding().navigationBarsPadding()) {
                             LogsScreen(ui, logFilterReq, onClose = { showLogs = false }) { logFilterReq = null }
                         }
                     }
-                    // 设备信息（全屏覆盖，由首页「实时指标-更多」进入）
                     if (showDevice) {
                         Column(Modifier.fillMaxSize().background(C.bg).statusBarsPadding().navigationBarsPadding()) {
                             DeviceInfoScreen(ui) { showDevice = false }
                         }
                     }
-                    // 应用详情底部弹层（覆盖整个界面，包括底部导航）
                     sheetPkg?.let { AppDetailSheet(ui, it) { sheetPkg = null } }
-                    // 扫描过程全屏界面（覆盖包括底部导航）
                     if (scanning) ScanScreen(ui) { scanning = false }
                     ToastHost(toast)
                     ConfirmHost(confirm)
@@ -191,7 +197,7 @@ fun AppRoot() {
 }
 
 @Composable
-private fun ProcTabBar(current: Tab, onSelect: (Tab) -> Unit) {
+private fun ProcTabBar(current: Tab, rulesDirty: Boolean = false, onSelect: (Tab) -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(66.dp).background(C.bg2),
         verticalAlignment = Alignment.CenterVertically,
@@ -205,10 +211,15 @@ private fun ProcTabBar(current: Tab, onSelect: (Tab) -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                Icon(
-                    t.icon, contentDescription = t.label, tint = tint,
-                    modifier = Modifier.size(23.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
-                )
+                Box {
+                    Icon(
+                        t.icon, contentDescription = t.label, tint = tint,
+                        modifier = Modifier.size(23.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale },
+                    )
+                    if (t == Tab.RULES && rulesDirty) {
+                        Box(Modifier.align(Alignment.TopEnd).size(8.dp).background(C.danger, RoundedCornerShape(50)))
+                    }
+                }
                 Text(
                     t.label, color = tint, fontSize = 10.sp,
                     fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,

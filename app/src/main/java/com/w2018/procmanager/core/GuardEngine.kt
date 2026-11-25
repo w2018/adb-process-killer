@@ -62,6 +62,8 @@ class GuardEngine(private val app: ProcApp) {
     private val bgSince = HashMap<String, Long>()
     private var lastFg: String? = null
     private val lastKilled = HashMap<String, Long>()
+    /** 上一次扫描时的用户进程集合，用于识别“新出现的后台进程”=自启动/被拉起。 */
+    private var prevPkgs: Set<String> = emptySet()
     private val rules: List<Rule> = listOf(
         PerAppRule(), PerAppThresholdRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule(),
         CacheIdleRule(), MemPressureRule(), LowBatteryRule()
@@ -217,6 +219,16 @@ class GuardEngine(private val app: ProcApp) {
             val fg = EventHub.foregroundPackage.value
             val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
             val present = procs.map { it.packageName }.toHashSet()
+            // 自启动识别：本次新出现、非前台、非本应用、非系统、非白名单的用户进程 → 记一次自启动
+            if (prevPkgs.isNotEmpty()) {
+                val sysPkgs = snap.apps.filter { it.isSystem }.map { it.packageName }.toHashSet()
+                for (np in present) {
+                    if (np in prevPkgs || np == fg || np == app.packageName) continue
+                    if (np in sysPkgs || app.settings.isWhitelisted(np)) continue
+                    app.stats.addAutoStart(np)
+                }
+            }
+            prevPkgs = present
             bgSince.keys.retainAll { it in present }
             for (p in procs) {
                 if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)

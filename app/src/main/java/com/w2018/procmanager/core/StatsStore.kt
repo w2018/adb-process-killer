@@ -88,6 +88,35 @@ class StatsStore(context: Context) {
         .mapKeys { it.key.removePrefix("kill_") }
         .mapValues { (it.value as? Int) ?: 0 }
 
+    // ---------------- 自启动次数（按天分桶，支持时间段筛选） ----------------
+    // 键格式：auto_{yyyy-MM-dd}_{pkg}，值为当天该应用被检测到的自启动次数
+
+    /** 记录一次自启动（后台被拉起）。 */
+    fun addAutoStart(pkg: String) {
+        if (pkg.isBlank()) return
+        val key = "auto_${today()}_$pkg"
+        sp.edit { putInt(key, sp.getInt(key, 0) + 1) }
+    }
+
+    /**
+     * 统计 [fromDay] 到 [toDay]（含，格式 yyyy-MM-dd）区间内各应用自启动次数。
+     * 日期字符串可直接按字典序比较。
+     */
+    fun autoStartCounts(fromDay: String, toDay: String): Map<String, Int> {
+        val out = HashMap<String, Int>()
+        for ((k, v) in sp.all) {
+            if (!k.startsWith("auto_")) continue
+            // auto_ + 10 位日期 + _ + pkg
+            if (k.length < 6 + 10 + 1) continue
+            val day = k.substring(5, 15)
+            if (day < fromDay || day > toDay) continue
+            val pkg = k.substring(16)
+            val c = (v as? Int) ?: continue
+            out[pkg] = (out[pkg] ?: 0) + c
+        }
+        return out
+    }
+
     fun resetToday() {
         sp.edit {
             putString("day", today())

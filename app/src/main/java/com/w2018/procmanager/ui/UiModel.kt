@@ -235,35 +235,83 @@ class AppUi(val app: ProcApp) {
         }
     }
 
-    fun applyPreset(p: String) = setCfg {
-        when (p) {
-            // 省电：阈值更宽松、少打扰、低频清理，关闭激进的缓存放行规则
-            "save" -> it.copy(
-                preset = "save", mem = 250, bgTime = 10, cpu = 25, cooldown = 30, buffer = 5,
-                memStop = true, cpuStop = false, cacheClean = false, cacheIdle = 15,
-                memPressureRule = false, memPressurePct = 15, boostRule = false, boostBattery = 20, boostTemp = 45,
-            )
-            // 性能：阈值更紧、更积极清理保流畅与降温，开启缓存/内存压力/低电高温加速清理
-            "perf" -> it.copy(
-                preset = "perf", mem = 120, bgTime = 3, cpu = 12, cooldown = 15, buffer = 1,
-                memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 5,
-                memPressureRule = true, memPressurePct = 20, boostRule = true, boostBattery = 25, boostTemp = 42,
-            )
-            // 均衡：默认推荐，各规则适度开启
-            else -> it.copy(
-                preset = "balance", mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3,
-                memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 10,
-                memPressureRule = true, memPressurePct = 15, boostRule = true, boostBattery = 20, boostTemp = 45,
-            )
-        }
-    }
+    /** 规则是否有未保存的改动（用于「规则」Tab 上的未保存小标志）。 */
+    var rulesDirty by mutableStateOf(false)
+    /** 规则页未保存草稿（跨 Tab 切换保留；null 表示与已保存一致）。 */
+    var rulesDraft by mutableStateOf<Cfg?>(null)
 
-    fun resetRules() = setCfg {
-        it.copy(
-            mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3, preset = "balance",
+    /** 返回在 [base] 基础上套用某预设后的规则快照（纯函数，不落库）。 */
+    fun presetOf(base: Cfg, p: String): Cfg = when (p) {
+        // 省电：阈值更宽松、少打扰、低频清理，关闭激进的缓存放行规则
+        "save" -> base.copy(
+            preset = "save", mem = 250, bgTime = 10, cpu = 25, cooldown = 30, buffer = 5,
+            memStop = true, cpuStop = false, cacheClean = false, cacheIdle = 15,
+            memPressureRule = false, memPressurePct = 15, boostRule = false, boostBattery = 20, boostTemp = 45,
+        )
+        // 性能：阈值更紧、更积极清理保流畅与降温
+        "perf" -> base.copy(
+            preset = "perf", mem = 120, bgTime = 3, cpu = 12, cooldown = 15, buffer = 1,
+            memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 5,
+            memPressureRule = true, memPressurePct = 20, boostRule = true, boostBattery = 25, boostTemp = 42,
+        )
+        // 均衡：默认推荐
+        else -> base.copy(
+            preset = "balance", mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3,
             memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 10,
             memPressureRule = true, memPressurePct = 15, boostRule = true, boostBattery = 20, boostTemp = 45,
         )
+    }
+
+    /** 返回在 [base] 基础上恢复默认规则的快照（纯函数，不落库）。 */
+    fun resetOf(base: Cfg): Cfg = base.copy(
+        mem = 180, bgTime = 6, cpu = 18, cooldown = 30, buffer = 3, preset = "balance",
+        memStop = true, cpuStop = true, cacheClean = true, cacheIdle = 10,
+        memPressureRule = true, memPressurePct = 15, boostRule = true, boostBattery = 20, boostTemp = 45,
+    )
+
+    /** 判断草稿与当前已保存规则在“规则相关字段”上是否有差异。 */
+    fun rulesDiffer(d: Cfg): Boolean {
+        val c = cfg
+        return d.mem != c.mem || d.bgTime != c.bgTime || d.cpu != c.cpu || d.cooldown != c.cooldown ||
+            d.buffer != c.buffer || d.memStop != c.memStop || d.cpuStop != c.cpuStop ||
+            d.cacheClean != c.cacheClean || d.cacheIdle != c.cacheIdle ||
+            d.memPressureRule != c.memPressureRule || d.memPressurePct != c.memPressurePct ||
+            d.boostRule != c.boostRule || d.boostBattery != c.boostBattery || d.boostTemp != c.boostTemp
+    }
+
+    /** 保存规则草稿：只把规则相关字段写入已保存配置（不动守护/通道等其它设置）。 */
+    fun commitRules(d: Cfg) {
+        val n = cfg.copy(
+            mem = d.mem, bgTime = d.bgTime, cpu = d.cpu, cooldown = d.cooldown, buffer = d.buffer,
+            memStop = d.memStop, cpuStop = d.cpuStop, cacheClean = d.cacheClean, cacheIdle = d.cacheIdle,
+            memPressureRule = d.memPressureRule, memPressurePct = d.memPressurePct,
+            boostRule = d.boostRule, boostBattery = d.boostBattery, boostTemp = d.boostTemp,
+        ).let { it.copy(preset = detectPreset(it)) }
+        cfg = n; Cfg.write(app.settings, n); rulesDirty = false; rulesDraft = null
+    }
+
+    fun applyPreset(p: String) = setCfg { presetOf(it, p) }
+
+    fun resetRules() = setCfg { resetOf(it) }
+
+    /** 按时间段统计各应用自启动次数。period: today / yesterday / week / month。 */
+    fun autoStartCounts(period: String): Map<String, Int> {
+        val cal = java.util.Calendar.getInstance()
+        fun fmt(c: java.util.Calendar): String =
+            java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(c.time)
+        val to = fmt(cal)
+        val from = when (period) {
+            "yesterday" -> { cal.add(java.util.Calendar.DAY_OF_YEAR, -1); fmt(cal) }
+            "week" -> { cal.add(java.util.Calendar.DAY_OF_YEAR, -6); fmt(cal) }
+            "month" -> {
+                val c2 = java.util.Calendar.getInstance()
+                c2.set(java.util.Calendar.DAY_OF_MONTH, 1)
+                fmt(c2)
+            }
+            else -> to
+        }
+        val toDay = if (period == "yesterday") from else to
+        return app.stats.autoStartCounts(from, toDay)
     }
 
     fun toggleMonitor(pkg: String) {

@@ -3,6 +3,8 @@ package com.w2018.procmanager.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -46,6 +49,7 @@ import com.w2018.procmanager.ui.theme.C
 @Composable
 fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
     var cat by rememberSaveable { mutableIntStateOf(0) }
+    var period by rememberSaveable { mutableStateOf("today") }
     val cats = listOf("清理排行", "自启排行", "优化建议")
 
     val apps = ui.snapshot?.apps ?: emptyList()
@@ -68,13 +72,17 @@ fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
             .map { e -> e.key to e.value }
     }
 
-    // 自启排行：自启动应用——已禁止自启优先，其次按被清理次数、内存降序
-    val autoSorted = remember(apps, killCounts, ui.bgRestricted) {
-        apps.filter { it.autoStart }.sortedWith(
-            compareByDescending<AppInfo> { if (ui.bgRestricted.contains(it.packageName)) 1 else 0 }
-                .thenByDescending { killCounts[it.packageName] ?: 0 }
-                .thenByDescending { memMap[it.packageName] ?: 0L }
-        )
+    // 自启排行：统计各应用在所选时间段内的自启动次数
+    val autoCounts = remember(ui.snapshot, period, ui.blocked, ui.killCounts) {
+        runCatching { ui.autoStartCounts(period) }.getOrDefault(emptyMap())
+    }
+    // 自启排行列表：出现过的自启应用（次数>0）或具备自启能力的应用，按自启次数降序，其次内存
+    val autoSorted = remember(apps, autoCounts, memMap) {
+        apps.filter { (autoCounts[it.packageName] ?: 0) > 0 || it.autoStart }
+            .sortedWith(
+                compareByDescending<AppInfo> { autoCounts[it.packageName] ?: 0 }
+                    .thenByDescending { memMap[it.packageName] ?: 0L }
+            )
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
@@ -98,7 +106,15 @@ fun RankScreen(ui: AppUi, onOpenApp: (String) -> Unit = {}) {
 
         when (cat) {
             0 -> KillRankList(killSorted, appMap, killCounts, ui, onOpenApp)
-            1 -> AutoRankList(autoSorted, killCounts, memMap, ui, onOpenApp)
+            1 -> {
+                // 时间段快捷筛选
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val periods = listOf("today" to "今日", "yesterday" to "昨日", "week" to "近7天", "month" to "当月")
+                    periods.forEach { (k, label) -> Chip(label, period == k) { period = k } }
+                }
+                Spacer(Modifier.height(10.dp))
+                AutoRankList(autoSorted, autoCounts, memMap, ui, onOpenApp)
+            }
             else -> SuggestionList(killCounts, appMap, memMap, autoSorted, ui, onOpenApp)
         }
     }
@@ -172,22 +188,21 @@ private fun KillRankList(
 @Composable
 private fun AutoRankList(
     list: List<AppInfo>,
-    killCounts: Map<String, Int>,
+    autoCounts: Map<String, Int>,
     memMap: Map<String, Long>,
     ui: AppUi,
     onOpenApp: (String) -> Unit,
 ) {
-    if (list.isEmpty()) { Empty("暂无自启动应用") ; return }
+    if (list.isEmpty()) { Empty("所选时间段暂无自启动记录；开启守护并保持无障碍/看门狗运行后会自动统计") ; return }
     LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items(list, key = { it.packageName }) { app ->
             val rank = list.indexOf(app) + 1
             val blocked = ui.bgRestricted.contains(app.packageName)
+            val cnt = autoCounts[app.packageName] ?: 0
             RankRow(rank, app, { onOpenApp(app.packageName) }) {
                 Column(horizontalAlignment = Alignment.End) {
-                    TagC(if (blocked) "已禁止自启" else "允许自启", if (blocked) C.success else C.warn)
-                    val cnt = killCounts[app.packageName] ?: 0
-                    val memMb = (memMap[app.packageName] ?: 0L) / 1024
-                    Text("清理 $cnt 次 · $memMb MB", color = C.text2, fontSize = 9.5.sp,
+                    Text("自启 $cnt 次", color = if (cnt > 0) C.warn else C.muted, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
+                    Text(if (blocked) "已禁止自启" else "允许自启", color = if (blocked) C.success else C.text2, fontSize = 9.5.sp,
                         modifier = Modifier.padding(top = 3.dp))
                 }
             }
