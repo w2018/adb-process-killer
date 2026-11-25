@@ -112,24 +112,27 @@ private class ScanController(private val ui: AppUi) {
                     return@launch
                 }
                 val hitMap = prep.hits.associateBy { it.pkg }
-                val per = when {
-                    targets.size > 120 -> 14L
-                    targets.size > 60 -> 22L
-                    targets.size > 30 -> 32L
-                    else -> 55L
-                }
+                val n = targets.size
+                // 动画总时长与数量无关，固定约 1.2 秒，避免应用多时看起来“一格一格慢慢扫”
+                val per = (1200L / n).coerceIn(2L, 10L)
+                // 降频刷新：每帧最多刷新约 80 次，减少无谓重组（真实命中检测仍逐项进行）
+                val step = (n / 80).coerceAtLeast(1)
                 val acc = ArrayList<KillCandidate>()
                 for ((idx, t) in targets.withIndex()) {
-                    _s.update { it.copy(current = t.label, scanned = idx, progress = idx.toFloat() / targets.size) }
-                    delay(per)
+                    if (idx % step == 0 || idx == n - 1) {
+                        _s.update { it.copy(current = t.label, scanned = idx, progress = idx.toFloat() / n) }
+                    }
                     val h = hitMap[t.pkg]
                     if (h != null && acc.none { it.pkg == h.pkg }) {
                         acc.add(h)
                         _s.update { it.copy(results = acc.toList()) }
                     }
-                    _s.update { it.copy(scanned = idx + 1, progress = (idx + 1).toFloat() / targets.size) }
+                    if (per > 0) delay(per)
+                    if (idx % step == 0 || idx == n - 1) {
+                        _s.update { it.copy(scanned = idx + 1, progress = (idx + 1).toFloat() / n) }
+                    }
                 }
-                delay(160)
+                delay(120)
                 _s.update { it.copy(phase = if (acc.isEmpty()) ScanPhase.EMPTY else ScanPhase.DONE, progress = 1f) }
             } catch (ce: CancellationException) {
                 throw ce
@@ -238,7 +241,7 @@ private fun ScanOrb(ctrl: ScanController) {
                 when (st.phase) {
                     ScanPhase.RUNNING -> "${(st.progress * 100).toInt()}%"
                     ScanPhase.DONE -> "已完成"
-                    ScanPhase.EMPTY -> "安全"
+                    ScanPhase.EMPTY -> "健康"
                     ScanPhase.ERROR -> "异常"
                     ScanPhase.CANCELLED -> "已中断"
                 },
@@ -248,7 +251,7 @@ private fun ScanOrb(ctrl: ScanController) {
                 when (st.phase) {
                     ScanPhase.RUNNING -> "扫描中"
                     ScanPhase.DONE -> "发现 ${st.results.size} 项"
-                    ScanPhase.EMPTY -> "未发现威胁"
+                    ScanPhase.EMPTY -> "未发现需清理项"
                     ScanPhase.ERROR -> "扫描失败"
                     ScanPhase.CANCELLED -> "扫描中断"
                 },

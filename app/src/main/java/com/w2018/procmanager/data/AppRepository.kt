@@ -192,7 +192,7 @@ class AppRepository(
 
     // ---------------- 进程 ----------------
 
-    suspend fun processes(topText: String? = null): List<ProcInfo> = withContext(Dispatchers.IO) {
+    suspend fun processes(topText: String? = null, lite: Boolean = false): List<ProcInfo> = withContext(Dispatchers.IO) {
         val psResult = channels.run("ps -A -o PID,PPID,USER,NAME,RSS,STAT,ELAPSED")
         if (psResult.stdout.isBlank()) return@withContext emptyList()
 
@@ -204,10 +204,12 @@ class AppRepository(
         val actResult = channels.run("dumpsys activity processes")
         if (actResult.ok) parseOom(actResult.stdout, oomMap)
 
-        // 进程 PSS（比 RSS 更接近真实占用，dumpsys meminfo 一次获取全部进程）
+        // 进程 PSS（比 RSS 更接近真实占用，dumpsys meminfo 一次获取全部进程）；lite 模式跳过以加速扫描
         val pssMap = HashMap<Int, Long>()
-        val memRes = channels.run("dumpsys meminfo")
-        if (memRes.ok) parsePss(memRes.stdout, pssMap)
+        if (!lite) {
+            val memRes = channels.run("dumpsys meminfo")
+            if (memRes.ok) parsePss(memRes.stdout, pssMap)
+        }
 
         val appMap = appMap()
         val out = ArrayList<ProcInfo>()
@@ -319,7 +321,7 @@ class AppRepository(
 
     // ---------------- 汇总采集 ----------------
 
-    suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) {
+    suspend fun snapshot(lite: Boolean = false): Snapshot = withContext(Dispatchers.IO) {
         val apps = apps()
         val ready = channels.current()?.isReady() == true
         if (!ready) {
@@ -327,8 +329,9 @@ class AppRepository(
             // 进程/CPU 需要 shell 才能获取，此处留空而不报错，避免界面卡顿。
             return@withContext Snapshot(apps, emptyList(), memInfo(), CpuInfo.EMPTY, System.currentTimeMillis())
         }
-        val top = channels.run(TopCmd.CMD, timeoutMs = 20000).stdout
-        val procs = processes(top)
+        // lite：仅 2 帧 top + 跳过 dumpsys meminfo，用于「扫描」过程快速取快照（省 1~2 秒）
+        val top = channels.run(if (lite) "top -b -n 2 -d 1" else TopCmd.CMD, timeoutMs = 20000).stdout
+        val procs = processes(top, lite)
         val mem = memInfo()
         val cpu = parseCpu(top)
         Snapshot(apps, procs, mem, cpu, System.currentTimeMillis())

@@ -293,7 +293,7 @@ class GuardEngine(private val app: ProcApp) {
      * 扫描到命中项时即时把 hits 里的对应项加入结果列表。
      */
     suspend fun prepareScan(): ScanPrep {
-        val snap = app.repo.snapshot()
+        val snap = app.repo.snapshot(lite = true)
         val now = System.currentTimeMillis()
         val fg = EventHub.foregroundPackage.value
         val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
