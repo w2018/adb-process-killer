@@ -1,5 +1,11 @@
 package com.w2018.procmanager.ui.screens
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +41,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -117,12 +125,20 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         } && (search.isBlank() || a.label.contains(search, true) || a.packageName.contains(search, true))
     }
 
-    // 排序：默认 / 按内存占用降序 / 按 CPU 占用降序（占用高者靠前）
-    val sorted = remember(list, sort, agg) {
+    // 排序：默认把「已冻结 / 有规则 / 有设置」的应用优先靠前，其余保持原序；也可按内存/CPU 降序
+    val sorted = remember(list, sort, agg, ui.frozen, ui.monitored, ui.bgStopSet, ui.ruleRev, ui.cfg.monitorMode) {
         when (sort) {
             "mem" -> list.sortedByDescending { agg[it.packageName]?.memKb ?: -1L }
             "cpu" -> list.sortedByDescending { agg[it.packageName]?.cpu ?: -1f }
-            else -> list
+            else -> list.sortedBy { a ->
+                when {
+                    ui.isFrozen(a.packageName) -> 0
+                    ui.app.settings.hasPerAppRule(a.packageName) || ui.bgStopSet.contains(a.packageName) -> 1
+                    ui.cfg.monitorMode == "selected" && ui.monitored.contains(a.packageName) -> 1
+                    a.autoStart -> 2
+                    else -> 3
+                }
+            }
         }
     }
     // 切换筛选/排序/搜索时回到列表顶部
@@ -158,6 +174,7 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
         )
+        RefreshIndicator(ui.refreshing, Modifier.padding(top = 8.dp))
         Spacer(Modifier.height(10.dp))
         // 排序按钮（靠前）：按内存占用 / CPU 占用
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -190,7 +207,9 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         } else {
             LazyColumn(Modifier.fillMaxSize(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sorted, key = { it.packageName }) { a ->
-                    AppRow(ui, a, agg[a.packageName], onOpenApp)
+                    Box(Modifier.animateItem()) {
+                        AppRow(ui, a, agg[a.packageName], onOpenApp)
+                    }
                 }
                 item {
                     Text("只读进程信息 · 冻结/终止均为无风险操作，系统关键应用已禁用冻结",
@@ -258,6 +277,26 @@ private fun MetricIcon(icon: String, value: String) {
         Ic(icon, 12, C.muted)
         Spacer(Modifier.width(2.dp))
         Text(value, color = C.text2, fontSize = 10.sp)
+    }
+}
+
+/** 列表刷新动效：刷新时顶部一条流动光带，提升刷新感知度。 */
+@Composable
+private fun RefreshIndicator(active: Boolean, modifier: Modifier = Modifier) {
+    val inf = rememberInfiniteTransition(label = "refresh")
+    val x by inf.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(950, easing = LinearEasing), RepeatMode.Restart),
+        label = "x",
+    )
+    Box(modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(C.card2)) {
+        if (active) {
+            Box(
+                Modifier.fillMaxWidth(0.35f).fillMaxSize()
+                    .graphicsLayer { translationX = x * (size.width / 0.35f) }
+                    .background(Brush.horizontalGradient(listOf(C.accent.copy(alpha = 0f), C.accent, C.accent.copy(alpha = 0f))))
+            )
+        }
     }
 }
 
@@ -397,7 +436,9 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                     SliderRow("后台超时", per.bgMin, 0, 60, if (per.bgMin == 0) "分·跟随全局" else "分") { ui.setPerApp(pkg, per.copy(bgMin = it)) }
                     Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
                     SliderRow("CPU 上限", per.cpu, 0, 100, if (per.cpu == 0) "%·跟随全局" else "%") { ui.setPerApp(pkg, per.copy(cpu = it)) }
-                    Text("0 表示沿用全局规则；开启后仅对该应用生效，不受全局阈值影响。",
+                    Box(Modifier.fillMaxWidth().padding(start = 16.dp).height(1.dp).background(C.border.copy(alpha = 0.6f)))
+                    SliderRow("缓冲时间", per.bufMin, 0, 30, if (per.bufMin == 0) "分·跟随全局" else "分") { ui.setPerApp(pkg, per.copy(bufMin = it)) }
+                    Text("0 表示沿用全局规则；开启后仅对该应用生效，不受全局阈值影响（单应用规则＞全局规则）。",
                         color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 12.dp), lineHeight = 15.sp)
                 }
             }

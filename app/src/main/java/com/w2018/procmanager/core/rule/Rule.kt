@@ -34,7 +34,9 @@ class RuleContext(
     /** 是否低电量（供低电量/高温规则使用）。 */
     val batteryLow: Boolean = false,
     /** 是否电池高温。 */
-    val tempHigh: Boolean = false
+    val tempHigh: Boolean = false,
+    /** 全局后台缓冲时长(ms)：进入后台超过此时长才按内存/CPU 阈值清理。 */
+    val bufferMs: Long = settings.bufferMin * 60_000L
 ) {
     /** 进程占用：优先 PSS，取不到回退 RSS。 */
     fun pssOrRss(p: ProcInfo): Long = if (p.pssKb > 0) p.pssKb else p.rssKb
@@ -50,6 +52,16 @@ class RuleContext(
     fun isBgStopForced(pkg: String): Boolean = settings.bgStopPkgs.contains(pkg)
 
     fun perAppEnabled(pkg: String): Boolean = perApp(pkg).enabled
+
+    /** 该应用是否启用「单应用独立规则」并因此覆盖全局规则（单应用规则＞全局规则）。 */
+    fun perAppOverrides(pkg: String): Boolean = perApp(pkg).enabled
+
+    /** 该应用适用的后台缓冲时长(ms)：单应用配置优先，否则用全局。 */
+    fun bufMs(pkg: String): Long {
+        val p = perApp(pkg)
+        val m = if (p.enabled && p.bufMin > 0) p.bufMin else settings.bufferMin
+        return m * 60_000L
+    }
 
     fun isPerAppMonitored(pkg: String): Boolean = isMonitored(pkg) || perAppEnabled(pkg)
 

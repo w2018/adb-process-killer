@@ -83,6 +83,9 @@ class SettingsStore(context: Context) {
         get() = i("cfg_cpu", 15); set(v) = ii("cfg_cpu", v)
     var cooldownSec: Int
         get() = i("cfg_cooldown", 30); set(v) = ii("cfg_cooldown", v)
+    /** 全局「后台缓冲时间」(分钟)：进入后台超过该时长才允许按内存/CPU 阈值清理，回到前台即刷新，避免误杀临时切后台的应用。 */
+    var bufferMin: Int
+        get() = i("cfg_bufferMin", 3); set(v) = ii("cfg_bufferMin", v)
     var scanInterval: Int
         get() = i("cfg_scan", 30); set(v) = ii("cfg_scan", v)
     var adbFreqLimit: Int
@@ -160,6 +163,8 @@ class SettingsStore(context: Context) {
         val memMb: Int = 0,
         val bgMin: Int = 0,
         val cpu: Int = 0,
+        /** 单应用缓冲时间(分钟)，0=跟随全局。进入后台超过该时长才按阈值清理。 */
+        val bufMin: Int = 0,
     )
 
     fun getPerApp(pkg: String): PerAppCfg {
@@ -171,14 +176,15 @@ class SettingsStore(context: Context) {
             memMb = p.getOrNull(1)?.toIntOrNull() ?: 0,
             bgMin = p.getOrNull(2)?.toIntOrNull() ?: 0,
             cpu = p.getOrNull(3)?.toIntOrNull() ?: 0,
+            bufMin = p.getOrNull(4)?.toIntOrNull() ?: 0,
         )
     }
 
     fun setPerApp(pkg: String, c: PerAppCfg) {
-        if (!c.enabled && c.memMb == 0 && c.bgMin == 0 && c.cpu == 0) {
+        if (!c.enabled && c.memMb == 0 && c.bgMin == 0 && c.cpu == 0 && c.bufMin == 0) {
             sp.edit { remove("pa_$pkg") }
         } else {
-            sp.edit { putString("pa_$pkg", "${if (c.enabled) 1 else 0};${c.memMb};${c.bgMin};${c.cpu}") }
+            sp.edit { putString("pa_$pkg", "${if (c.enabled) 1 else 0};${c.memMb};${c.bgMin};${c.cpu};${c.bufMin}") }
         }
     }
 

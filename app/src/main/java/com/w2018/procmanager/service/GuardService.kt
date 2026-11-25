@@ -88,13 +88,20 @@ class GuardService : Service() {
         val paused = GuardRuntime.paused.value
         val statusText = if (paused) "已暂停" else "守护中"
         val freedMb = stats.freedKb / 1024
-        val scopeText = if (app.settings.monitorMode == "all") "全部用户应用" else "$monitored 个应用"
+        val scopeText = if (app.settings.monitorMode == "all") "全部应用" else "$monitored 个应用"
         val title = "进程杀手 · $statusText"
-        val text = "监控 $scopeText · 今日拦截 ${stats.blocked} 次 · 释放 $freedMb MB"
+        // contentText 保持精简，避免系统被动换行；详细内容在展开大文本里按语义主动换行
+        val text = "监控 $scopeText"
         val last = EventLog.events.value.lastOrNull { it.type == LogType.KILL || it.type == LogType.RULE }
-        val bigText = if (last != null)
-            text + "\n最近：" + last.title + (if (last.detail.isNotBlank()) " · " + last.detail else "")
-        else text
+        val bigText = buildString {
+            append("监控范围：").append(scopeText).append('\n')
+            append("今日拦截：").append(stats.blocked).append(" 次\n")
+            append("释放内存：").append(freedMb).append(" MB")
+            if (last != null) {
+                append("\n最近：").append(last.title)
+                if (last.detail.isNotBlank()) append(" · ").append(last.detail)
+            }
+        }
 
         val contentIntent = PendingIntent.getActivity(
             this, 0,

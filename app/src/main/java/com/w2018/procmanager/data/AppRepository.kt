@@ -60,6 +60,23 @@ class AppRepository(
     fun appMap(): Map<String, AppInfo> =
         appCache?.associateBy { it.packageName } ?: emptyMap()
 
+    /** 已被系统「停用」的应用（applicationInfo.enabled=false，含用户与系统应用）。用于冻结管理中展示与一键启用。 */
+    suspend fun disabledApps(): List<AppInfo> = withContext(Dispatchers.IO) {
+        val pm = context.packageManager
+        val out = ArrayList<AppInfo>()
+        val installed = runCatching {
+            pm.getInstalledApplications(PackageManager.MATCH_DISABLED_COMPONENTS)
+        }.getOrDefault(emptyList())
+        for (ai in installed) {
+            if (ai.enabled) continue
+            val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val label = runCatching { pm.getApplicationLabel(ai).toString() }.getOrDefault(ai.packageName)
+            out.add(AppInfo(ai.packageName, label, isSystem, ai.uid, false))
+        }
+        out.sortWith(compareBy({ it.isSystem }, { it.label.lowercase() }))
+        out
+    }
+
     /**
      * 列出所有声明了 BOOT_COMPLETED 的广播接收器组件及其启用状态（含被禁用的）。
      * 用于「自启动治理」：禁止/恢复开机自启 = 禁用/启用这些接收器组件（不冻结应用）。

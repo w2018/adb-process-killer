@@ -48,12 +48,17 @@ class StatsStore(context: Context) {
         get() { ensureDay(); return sp.getInt("scans", 0) }
         private set(v) { sp.edit { putInt("scans", v) } }
 
+    /** 最近一次清理释放的内存（跨天保留，代表“上一次释放”，非累计）。 */
+    var lastFreedKb: Long
+        get() = sp.getLong("last_freed", 0L)
+        private set(v) { sp.edit { putLong("last_freed", v) } }
+
     /** 记录一次清理：appCount=本次终止的应用数，freed=估算释放内存。 */
     fun addBlocked(appCount: Int, freed: Long) {
         ensureDay()
         if (appCount > 0) blocked = blocked + appCount
         batches = batches + 1
-        if (freed > 0) freedKb = freedKb + freed
+        if (freed > 0) { freedKb = freedKb + freed; lastFreedKb = freed }
     }
 
     fun addScan() {

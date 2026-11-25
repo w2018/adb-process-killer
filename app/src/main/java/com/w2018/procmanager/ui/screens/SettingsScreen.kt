@@ -234,7 +234,11 @@ fun SettingsScreen(ui: AppUi) {
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("无障碍服务", color = C.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("用于前台切换检测，事件驱动更省电（可选）", color = C.text2, fontSize = 10.5.sp)
+                    Text(
+                        if (ui.a11y) "前台切换：无障碍事件（低功耗）· 关闭后看门狗自动降级为轮询兜底"
+                        else "未开启：纯轮询兜底（较耗电），建议开启以省电",
+                        color = C.text2, fontSize = 10.5.sp, lineHeight = 14.sp)
+
                 }
                 TagC(if (ui.a11y) "已开启" else "未开启", if (ui.a11y) C.accent else C.muted)
                 Spacer(Modifier.width(6.dp))
@@ -251,7 +255,7 @@ fun SettingsScreen(ui: AppUi) {
             SetDivider()
             RowItem("power", "自启动治理", "禁止应用开机自启，减少后台占用", "") { showAutoStart = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.1.7 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.1.8 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -310,13 +314,31 @@ private fun RowItem(icon: String, title: String, desc: String, value: String, on
 @Composable
 private fun WhitelistDialog(ui: AppUi, onClose: () -> Unit) {
     val apps = ui.snapshot?.apps ?: emptyList()
+    var q by remember { mutableStateOf("") }
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
             Text("白名单管理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("白名单中的应用永不清理、永不冻结", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-            LazyColumn(Modifier.fillMaxWidth()) {
-                items(apps, key = { it.packageName }) { a ->
-                    if (a.isSystem) return@items
+            Text("白名单中的应用永不清理、永不冻结", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 8.dp))
+            OutlinedTextField(
+                value = q, onValueChange = { q = it }, singleLine = true,
+                placeholder = { Text("搜索应用名称或包名", color = C.muted, fontSize = 12.5.sp) },
+                leadingIcon = { Ic("search", 16, C.muted) },
+                trailingIcon = {
+                    if (q.isNotEmpty()) Box(Modifier.clip(RoundedCornerShape(50)).clickable { q = "" }.padding(6.dp)) { Ic("x", 14, C.muted) }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = C.card, unfocusedContainerColor = C.card,
+                    focusedBorderColor = C.accent, unfocusedBorderColor = C.border,
+                    focusedTextColor = C.text, unfocusedTextColor = C.text, cursorColor = C.accent,
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val shown = apps
+                .filter { !it.isSystem && (q.isBlank() || it.label.contains(q, true) || it.packageName.contains(q, true)) }
+                .sortedWith(compareBy({ if (ui.whitelist.contains(it.packageName)) 0 else 1 }, { it.label }))
+            LazyColumn(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                items(shown, key = { it.packageName }) { a ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(a.label, color = C.text, fontSize = 13.sp, maxLines = 1)
@@ -324,6 +346,9 @@ private fun WhitelistDialog(ui: AppUi, onClose: () -> Unit) {
                         }
                         ProcSwitch(ui.whitelist.contains(a.packageName)) { ui.toggleWhite(a.packageName) }
                     }
+                }
+                if (shown.isEmpty()) {
+                    item { Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 16.dp)) }
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -347,11 +372,11 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
     val bootPkgs = ui.bootReceivers.map { it.pkg }.toSet()
     val autoApps = (snap?.apps ?: emptyList())
         .filter { !it.isSystem && it.packageName != ui.app.packageName && (it.autoStart || it.packageName in bootPkgs) }
-        .sortedByDescending { memMap[it.packageName] ?: 0L }
+        .sortedWith(compareBy({ if (ui.isAutoStartBlocked(it.packageName)) 0 else 1 }, { -(memMap[it.packageName] ?: 0L) }))
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
             Text("自启动治理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("禁止自启 = 用系统 AppOps 限制其后台运行（不改动应用、不冻结，可随时恢复）· 共 ${autoApps.size} 个自启应用，按内存排序", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+            Text("禁止自启 = 用系统 AppOps 限制其后台运行（不改动应用、不冻结，可随时恢复）· 共 ${autoApps.size} 个自启动应用，已禁止的优先，其余按内存排序", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(autoApps, key = { it.packageName }) { a ->
                     val mem = (memMap[a.packageName] ?: 0L) / 1024

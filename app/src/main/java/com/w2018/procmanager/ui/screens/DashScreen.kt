@@ -1,9 +1,12 @@
 package com.w2018.procmanager.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,7 +69,7 @@ import com.w2018.procmanager.ui.theme.C
 import kotlinx.coroutines.launch
 
 @Composable
-fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) -> Unit = {}) {
+fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) -> Unit = {}, onOpenScan: () -> Unit = {}) {
     val toast = LocalToast.current
     val confirm = LocalConfirm.current
     val scope = rememberCoroutineScope()
@@ -74,7 +77,6 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
     val appVer = remember { runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull().orEmpty() }
     val snap = ui.snapshot
     val scroll = rememberScrollState()
-    var scanResults by remember { mutableStateOf<List<KillCandidate>?>(null) }
     var showFreeze by remember { mutableStateOf(false) }
 
     val mem = snap?.mem
@@ -109,9 +111,16 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                 Row(Modifier.padding(top = 3.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (ui.cfg.guardian) PulseDot(C.success, 7) else DotM(C.danger, 7)
                     Spacer(Modifier.width(6.dp))
+                    val chText = when {
+                        !ui.channelReady -> "未连接"
+                        ui.channelType == "adb" -> {
+                            val addr = ui.channelDetail.substringAfter("已连接 ", "").trim()
+                            "无线 ADB " + addr.ifBlank { "" }
+                        }
+                        else -> ui.channelLabel
+                    }
                     Text(
-                        (if (ui.cfg.guardian) "守护运行中" else "守护已暂停") +
-                            " · " + (if (ui.channelReady) ui.channelLabel else "未连接"),
+                        (if (ui.cfg.guardian) "守护运行中" else "守护已暂停") + " · " + chText,
                         color = C.text2, fontSize = 12.sp,
                     )
                 }
@@ -167,10 +176,15 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                     Text(" 个应用受管", color = C.text2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(bottom = 6.dp))
                 }
-                Text("今日已自动清理 ${ui.blocked} 个应用 · 约释放 ${ui.freedKb / 1024} MB", color = C.text2, fontSize = 11.5.sp)
+                Text("今日已自动清理 ${ui.blocked} 个应用", color = C.text2, fontSize = 11.5.sp)
                 Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     HeroStat("${ui.blocked}", "个", "今日清理应用", C.warn)
-                    HeroStat("约 ${ui.freedKb / 1024}", "MB", "释放内存(估算)", C.accent)
+                    HeroStat(
+                        if (ui.lastFreedKb > 0) "约 ${ui.lastFreedKb / 1024}" else "—",
+                        if (ui.lastFreedKb > 0) "MB" else "",
+                        "上次释放内存",
+                        C.accent
+                    )
                     HeroStat("$monCount", "", "监控范围", C.blue)
                     HeroStat("${snap?.processes?.size ?: 0}", "", "进程总数", C.text)
                 }
@@ -188,11 +202,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
             } }
             Box(Modifier.weight(1f)) { QuickItem("refresh", "立即扫描", C.blue) {
                 if (!ui.channelReady) { toast.show("未连接权限通道，请先在设置中连接"); return@QuickItem }
-                scope.launch {
-                    toast.show("正在扫描…")
-                    val list = runCatching { ui.scanCandidates() }.getOrDefault(emptyList())
-                    if (list.isEmpty()) toast.show("未发现符合规则的后台应用") else scanResults = list
-                }
+                onOpenScan()
             } }
             Box(Modifier.weight(1f)) { QuickItem("snow", "冻结后台", C.warn) {
                 if (!ui.channelReady) { toast.show("未连接权限通道，请先在设置中连接"); return@QuickItem }
@@ -250,9 +260,6 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 
-    scanResults?.let { list ->
-        ScanResultDialog(ui = ui, list = list, onClose = { scanResults = null }, onCleaned = { scanResults = null })
-    }
     if (showFreeze) {
         FreezeManageDialog(ui = ui, ctx = ctx, onClose = { showFreeze = false })
     }
@@ -314,52 +321,78 @@ private fun ScanResultDialog(
 private fun FreezeManageDialog(ui: AppUi, ctx: android.content.Context, onClose: () -> Unit) {
     val toast = LocalToast.current
     val scope = rememberCoroutineScope()
-    var onlyFrozen by remember { mutableStateOf(true) }
+    var mode by remember { mutableStateOf("frozen") } // frozen | disabled | all
     val apps = ui.snapshot?.apps ?: emptyList()
-    val shown = if (onlyFrozen) apps.filter { ui.isFrozen(it.packageName) } else apps
+    val disabled = ui.disabledApps
+    val shown: List<AppInfo> = when (mode) {
+        "frozen" -> apps.filter { ui.isFrozen(it.packageName) }
+        "disabled" -> disabled
+        else -> apps
+    }
     Dialog(onDismissRequest = onClose) {
         Box(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(C.card)
                 .border(1.dp, C.border, RoundedCornerShape(18.dp)).padding(16.dp),
         ) {
             Column {
-                Text("冻结应用", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("点击应用跳转系统设置；右侧可冻结 / 解除冻结",
+                Text("冻结 / 停用管理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("含本应用冻结与被系统停用的全部应用；点击应用跳转系统设置，右侧可冻结 / 解除 / 启用",
                     color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Chip("已冻结", onlyFrozen) { onlyFrozen = true }
-                    Chip("全部应用", !onlyFrozen) { onlyFrozen = false }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Chip("已冻结 ${apps.count { ui.isFrozen(it.packageName) }}", mode == "frozen") { mode = "frozen" }
+                    Chip("已停用 ${disabled.size}", mode == "disabled") { mode = "disabled" }
+                    Chip("全部应用", mode == "all") { mode = "all" }
                 }
                 Spacer(Modifier.height(10.dp))
                 if (shown.isEmpty()) {
-                    Text(if (onlyFrozen) "当前没有已冻结的应用" else "无应用", color = C.muted, fontSize = 12.sp,
-                        modifier = Modifier.padding(vertical = 20.dp))
+                    Text(
+                        when (mode) { "frozen" -> "当前没有已冻结的应用"; "disabled" -> "当前没有被系统停用的应用"; else -> "无应用" },
+                        color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 20.dp)
+                    )
                 } else {
                     LazyColumn(Modifier.heightIn(max = 400.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(shown, key = { it.packageName }) { a ->
-                            val frozen = ui.isFrozen(a.packageName)
+                            val pkg = a.packageName
+                            val manualFrozen = ui.isFrozen(pkg)
+                            val sysDisabled = pkg in ui.disabledSet
+                            val off = manualFrozen || sysDisabled
                             Row(Modifier.fillMaxWidth().clickable {
                                 runCatching {
                                     ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                        Uri.parse("package:${a.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                        Uri.parse("package:$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                 }
                             }, verticalAlignment = Alignment.CenterVertically) {
-                                AppIcon(a.packageName, a.label, 34)
+                                AppIcon(pkg, a.label, 34)
                                 Spacer(Modifier.width(8.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(a.label, color = C.text, fontSize = 13.sp,
                                         fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                    Text(if (frozen) "已冻结" else if (a.isSystem) "系统应用" else "未冻结",
-                                        color = if (frozen) C.warn else C.text2, fontSize = 10.5.sp)
+                                    Text(
+                                        when {
+                                            manualFrozen -> "已冻结"
+                                            sysDisabled -> "已停用"
+                                            a.isSystem -> "系统应用"
+                                            else -> "未冻结"
+                                        },
+                                        color = if (off) C.warn else C.text2, fontSize = 10.5.sp
+                                    )
                                 }
-                                ProcButton(if (frozen) "解除" else "冻结",
-                                    kind = if (frozen) BtnKind.Ghost else BtnKind.Danger, onClick = {
+                                if (off) {
+                                    ProcButton(if (manualFrozen) "解除" else "启用", kind = BtnKind.Ghost, onClick = {
                                         scope.launch {
-                                            val ok = ui.freezeApp(a.packageName, !frozen)
-                                            toast.show(if (ok) (if (frozen) "已解除 " else "已冻结 ") + a.label else "操作失败，请检查权限通道")
+                                            val ok = ui.freezeApp(pkg, false)
+                                            toast.show(if (ok) "已启用 " + a.label else "操作失败，请检查权限通道")
                                         }
                                     })
+                                } else {
+                                    ProcButton("冻结", kind = BtnKind.Danger, onClick = {
+                                        scope.launch {
+                                            val ok = ui.freezeApp(pkg, true)
+                                            toast.show(if (ok) "已冻结 " + a.label else "操作失败，请检查权限通道")
+                                        }
+                                    })
+                                }
                             }
                         }
                     }
@@ -427,24 +460,31 @@ private fun MemoryChart(percent: Float, history: List<Float>) {
                 Text("使用率 ${percent.toInt()}%", color = C.text2, fontSize = 10.5.sp)
             }
         }
-        // 真实历史：不足 12 个采样点时用当前值补齐（不做任何演示/伪造数据）
-        val filled: List<Float> = when {
-            history.isEmpty() -> List(12) { percent }
-            history.size >= 12 -> history.takeLast(12)
-            else -> List(12 - history.size) { history.first() } + history
-        }
-        val bars = filled.map { (it / 100f).coerceIn(0.04f, 1f) }
+        // 真实历史：只绘制真实采样点；不足 12 处用空槽占位（不再用当前值伪造等高柱）
+        val real = history.takeLast(12)
+        val slots: List<Float?> = List((12 - real.size).coerceAtLeast(0)) { null } + real.map { it.coerceIn(0f, 100f) }
+        val nonNull = slots.filterNotNull()
+        // 动态缩放：以本窗口 min/max 放大波动，使真实变化肉眼可见
+        val hi = (nonNull.maxOrNull() ?: percent).coerceAtLeast(1f)
+        val lo = (nonNull.minOrNull() ?: percent).coerceAtLeast(0f)
+        val span = (hi - lo).coerceAtLeast(3f)
         Row(Modifier.fillMaxWidth().height(84.dp).padding(top = 14.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            bars.forEach { h ->
-                val hot = h > 0.85f
-                Box(
-                    Modifier.weight(1f).fillMaxHeight(h).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
-                        .background(
-                            if (hot) Brush.verticalGradient(listOf(C.warn, C.warn.copy(alpha = 0.2f)))
-                            else Brush.verticalGradient(listOf(C.accent, C.accent.copy(alpha = 0.25f)))
-                        ),
-                )
+            slots.forEach { v ->
+                if (v == null) {
+                    Box(Modifier.weight(1f).fillMaxHeight(0.06f).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)).background(C.card2))
+                } else {
+                    val target = (0.15f + 0.85f * ((v - lo) / span)).coerceIn(0.08f, 1f)
+                    val h by animateFloatAsState(target, animationSpec = tween(420), label = "bar")
+                    val hot = v > 85f
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight(h).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                            .background(
+                                if (hot) Brush.verticalGradient(listOf(C.warn, C.warn.copy(alpha = 0.2f)))
+                                else Brush.verticalGradient(listOf(C.accent, C.accent.copy(alpha = 0.25f)))
+                            ),
+                    )
+                }
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -479,7 +519,6 @@ private fun MemoryChart(percent: Float, history: List<Float>) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 LegendItem(C.accent, "已用", "${percent.toInt()}%")
                 LegendItem(C.card2, "可用", "${100 - percent.toInt()}%")
-                LegendItem(C.warn, "缓存", "-")
             }
         }
     }

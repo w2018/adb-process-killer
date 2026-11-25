@@ -18,6 +18,7 @@ import com.w2018.procmanager.core.rule.LowBatteryRule
 import com.w2018.procmanager.core.rule.MemPressureRule
 import com.w2018.procmanager.core.rule.MemoryRule
 import com.w2018.procmanager.core.rule.PerAppRule
+import com.w2018.procmanager.core.rule.PerAppThresholdRule
 import com.w2018.procmanager.core.rule.Rule
 import com.w2018.procmanager.core.rule.RuleContext
 import com.w2018.procmanager.core.rule.WakeBlockRule
@@ -32,6 +33,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** 扫描过程中的一个扫描目标（应用）。 */
+data class ScanTarget(
+    val pkg: String,
+    val label: String,
+    val memKb: Long,
+    val isSystem: Boolean,
+)
+
+/** 扫描准备数据：逐个扫描的目标 + 规则命中的可清理候选。 */
+data class ScanPrep(
+    val targets: List<ScanTarget>,
+    val hits: List<KillCandidate>,
+)
+
 /**
  * 守护引擎：事件驱动 + 轮询兜底 + 省电策略。
  * - 事件驱动：无障碍上报前台切换时立即触发一次扫描。
@@ -45,9 +60,10 @@ class GuardEngine(private val app: ProcApp) {
     private val kick = Channel<Unit>(Channel.CONFLATED)
 
     private val bgSince = HashMap<String, Long>()
+    private var lastFg: String? = null
     private val lastKilled = HashMap<String, Long>()
     private val rules: List<Rule> = listOf(
-        PerAppRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule(),
+        PerAppRule(), PerAppThresholdRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule(),
         CacheIdleRule(), MemPressureRule(), LowBatteryRule()
     )
     private val scanTimes = ArrayDeque<Long>()
@@ -63,13 +79,30 @@ class GuardEngine(private val app: ProcApp) {
         protected = computeProtected()
         GuardRuntime.requestClean = { cleanNow() }
         GuardRuntime.requestKick = { scope.launch { kick.trySend(Unit) } }
-        // 事件驱动：前台应用变化即触发扫描
+        // 事件驱动：前台应用变化即触发扫描，并用事件精确维护「后台起始时间」（供缓冲时间规则）
         scope.launch {
             EventHub.foregroundPackage.collect { pkg ->
                 if (!pkg.isNullOrBlank()) {
-                    recentFg[pkg] = System.currentTimeMillis()
+                    val now = System.currentTimeMillis()
+                    val prev = lastFg
+                    // 上一个前台应用此刻进入后台 → 记录其后台起始时间；回到前台的应用重置计时
+                    if (prev != null && prev != pkg) bgSince.putIfAbsent(prev, now)
+                    bgSince.remove(pkg)
+                    lastFg = pkg
+                    recentFg[pkg] = now
                     kick.trySend(Unit)
                 }
+            }
+        }
+        // 监控方式互斥：无障碍可用→事件驱动(低功耗)；被关闭/未开启→自动降级轮询(兜底)
+        GuardRuntime.monitorMode.value =
+            if (EventHub.accessibilityConnected.value) GuardRuntime.MonitorMode.EVENT else GuardRuntime.MonitorMode.POLL
+        scope.launch {
+            EventHub.accessibilityConnected.collect { on ->
+                GuardRuntime.monitorMode.value = if (on) GuardRuntime.MonitorMode.EVENT else GuardRuntime.MonitorMode.POLL
+                if (on) kick.trySend(Unit)
+                EventLog.add(LogType.SYSTEM,
+                    if (on) "监控方式：无障碍事件（低功耗）" else "监控方式：轮询（兜底）")
             }
         }
         job = scope.launch { loop() }
@@ -109,8 +142,9 @@ class GuardEngine(private val app: ProcApp) {
 
     private suspend fun loop() {
         while (currentCoroutineContext().isActive) {
-            val interval = app.settings.scanInterval.coerceIn(15, 120)
-            // 事件触发优先；否则等待到下一次轮询
+            // 事件驱动模式下放宽兜底轮询间隔（事件已即时触发，轮询仅作安全网）以省电；轮询模式按设定间隔
+            val base = app.settings.scanInterval.coerceIn(15, 120)
+            val interval = if (GuardRuntime.monitorMode.value == GuardRuntime.MonitorMode.EVENT) maxOf(base, 60) else base
             val ev = withTimeoutOrNull(interval * 1000L) { kick.receive() }
             if (!app.settings.guardian) continue
             if (!app.settings.watchdog) continue
@@ -251,6 +285,52 @@ class GuardEngine(private val app: ProcApp) {
             return chosen.size
         }
         return 0
+    }
+
+    /**
+     * 为“扫描过程动画”准备数据：返回本次需要逐个扫描的目标清单(targets)，
+     * 以及规则命中的可清理候选(hits)。UI 侧按 targets 逐项播放扫描动画，
+     * 扫描到命中项时即时把 hits 里的对应项加入结果列表。
+     */
+    suspend fun prepareScan(): ScanPrep {
+        val snap = app.repo.snapshot()
+        val now = System.currentTimeMillis()
+        val fg = EventHub.foregroundPackage.value
+        val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
+        val present = procs.map { it.packageName }.toHashSet()
+        bgSince.keys.retainAll { it in present }
+        for (p in procs) {
+            if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
+            else bgSince.putIfAbsent(p.packageName, now)
+        }
+        val recent = recentlyUsed()
+        val (bLow, tHigh) = batteryState()
+        val ctx = RuleContext(
+            snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
+            perApp = { app.settings.getPerApp(it) },
+            monitorAll = app.settings.monitorMode == "all",
+            freqProtected = recent,
+            memPressure = memPressureOf(snap.mem),
+            batteryLow = bLow, tempHigh = tHigh
+        )
+        val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
+        val cooldownMs = app.settings.cooldownSec * 1000L
+        val hits = candidates
+            .filter { c ->
+                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) && c.pkg !in recent &&
+                    autoKillable(c.pkg) &&
+                    (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
+            }
+            .distinctBy { it.pkg }
+            .sortedByDescending { it.freedKb }
+        // 每个包的内存（PSS 优先，回退 RSS）
+        val memMap = HashMap<String, Long>()
+        for (p in procs) memMap[p.packageName] = (memMap[p.packageName] ?: 0L) + (if (p.pssKb > 0) p.pssKb else p.rssKb)
+        val targets = snap.apps
+            .map { ScanTarget(it.packageName, it.label, memMap[it.packageName] ?: 0L, it.isSystem) }
+            .distinctBy { it.pkg }
+            .sortedByDescending { it.memKb }
+        return ScanPrep(targets, hits)
     }
 
     /**

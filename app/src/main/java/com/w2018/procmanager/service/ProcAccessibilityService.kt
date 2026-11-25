@@ -31,6 +31,11 @@ class ProcAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {
     }
 
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        EventHub.setAccessibilityConnected(false)
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         EventHub.setAccessibilityConnected(false)
         EventLog.add(LogType.SYSTEM, "无障碍服务已断开", "降级为轮询模式")

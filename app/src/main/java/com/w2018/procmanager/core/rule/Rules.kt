@@ -20,6 +20,37 @@ class PerAppRule : Rule {
     }
 }
 
+/**
+ * 单应用独立规则（阈值版）：对已启用「单应用独立规则」的应用，按各自的内存/CPU/后台时长阈值清理，
+ * 并受该应用缓冲时间约束（回到前台即刷新）。启用后该应用不再套用全局内存/CPU/后台超时规则。
+ */
+class PerAppThresholdRule : Rule {
+    override val id = "per_app_threshold"
+    override val name = "单应用独立规则"
+    override fun enabled(s: SettingsStore) = true
+    override fun evaluate(ctx: RuleContext): List<KillCandidate> {
+        val out = ArrayList<KillCandidate>()
+        for (p in ctx.allUserProcesses()) {
+            val cfg = ctx.perApp(p.packageName)
+            if (!cfg.enabled) continue
+            if (p.packageName == ctx.foregroundPkg) continue
+            if (ctx.isProtected(p.packageName)) continue
+            if (p.isForeground) continue
+            val idle = ctx.idleMs(p.packageName)
+            val buf = ctx.bufMs(p.packageName)
+            val used = ctx.pssOrRss(p)
+            val reason = when {
+                cfg.memMb > 0 && used >= cfg.memMb.toLong() * 1024 && idle >= buf -> "单应用·内存超限"
+                cfg.cpu > 0 && p.cpuPercent >= cfg.cpu && idle >= buf -> "单应用·CPU超限"
+                cfg.bgMin > 0 && idle >= cfg.bgMin.toLong() * 60_000 -> "单应用·后台超时"
+                else -> null
+            }
+            if (reason != null) out.add(KillCandidate(p.packageName, p.pid, reason, used))
+        }
+        return out
+    }
+}
+
 /** 后台超时：后台停留超过阈值分钟数则清理。 */
 class BackgroundTimeRule : Rule {
     override val id = "bg_time"
@@ -30,6 +61,7 @@ class BackgroundTimeRule : Rule {
         for (p in ctx.appProcesses()) {
             if (p.packageName == ctx.foregroundPkg) continue
             if (ctx.isProtected(p.packageName)) continue
+            if (ctx.perAppOverrides(p.packageName)) continue // 单应用独立规则优先，全局规则不介入
             if (p.isForeground) continue
             val minMs = ctx.bgMinMs(p.packageName)
             if (minMs <= 0) continue
@@ -52,7 +84,9 @@ class MemoryRule : Rule {
         for (p in ctx.appProcesses()) {
             if (p.packageName == ctx.foregroundPkg) continue
             if (ctx.isProtected(p.packageName)) continue
+            if (ctx.perAppOverrides(p.packageName)) continue // 单应用独立规则优先
             if (p.isForeground) continue
+            if (ctx.idleMs(p.packageName) < ctx.bufMs(p.packageName)) continue // 后台缓冲时间未到，避免误杀临时切后台
             val used = ctx.pssOrRss(p)
             val limitKb = ctx.memLimitKb(p.packageName)
             if (used >= limitKb && used > 0) {
@@ -73,7 +107,9 @@ class CpuRule : Rule {
         for (p in ctx.appProcesses()) {
             if (p.packageName == ctx.foregroundPkg) continue
             if (ctx.isProtected(p.packageName)) continue
+            if (ctx.perAppOverrides(p.packageName)) continue // 单应用独立规则优先
             if (p.isForeground) continue
+            if (ctx.idleMs(p.packageName) < ctx.bufMs(p.packageName)) continue // 后台缓冲时间未到
             val limit = ctx.cpuLimit(p.packageName)
             if (p.cpuPercent >= limit && p.cpuPercent > 0f) {
                 out.add(KillCandidate(p.packageName, p.pid, "CPU超限", p.rssKb))

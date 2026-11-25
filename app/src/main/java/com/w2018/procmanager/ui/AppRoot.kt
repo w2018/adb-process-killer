@@ -60,6 +60,7 @@ import com.w2018.procmanager.ui.screens.AppsScreen
 import com.w2018.procmanager.ui.screens.DashScreen
 import com.w2018.procmanager.ui.screens.LogsScreen
 import com.w2018.procmanager.ui.screens.RulesScreen
+import com.w2018.procmanager.ui.screens.ScanScreen
 import com.w2018.procmanager.ui.screens.SettingsScreen
 import com.w2018.procmanager.ui.theme.C
 import com.w2018.procmanager.ui.theme.ScaledContent
@@ -86,6 +87,7 @@ fun AppRoot() {
     var tab by remember { mutableStateOf(Tab.DASH) }
     var sheetPkg by remember { mutableStateOf<String?>(null) }
     var logFilterReq by remember { mutableStateOf<String?>(null) }
+    var scanning by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         ui.observe(scope)
@@ -121,6 +123,7 @@ fun AppRoot() {
 
     BackHandler(enabled = true) {
         when {
+            scanning -> scanning = false
             sheetPkg != null -> sheetPkg = null
             tab != Tab.DASH -> tab = Tab.DASH
             else -> activity?.finish()
@@ -139,7 +142,7 @@ fun AppRoot() {
                                 label = "tabContent",
                             ) { t ->
                                 when (t) {
-                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; tab = Tab.LOGS })
+                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; tab = Tab.LOGS }, onOpenScan = { scanning = true })
                                     Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
                                     Tab.RULES -> RulesScreen(ui)
                                     Tab.LOGS -> LogsScreen(ui, logFilterReq) { logFilterReq = null }
@@ -151,6 +154,8 @@ fun AppRoot() {
                     }
                     // 应用详情底部弹层（覆盖整个界面，包括底部导航）
                     sheetPkg?.let { AppDetailSheet(ui, it) { sheetPkg = null } }
+                    // 扫描过程全屏界面（覆盖包括底部导航）
+                    if (scanning) ScanScreen(ui) { scanning = false }
                     ToastHost(toast)
                     ConfirmHost(confirm)
                 }

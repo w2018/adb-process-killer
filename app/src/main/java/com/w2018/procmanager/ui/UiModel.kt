@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.w2018.procmanager.ProcApp
+import com.w2018.procmanager.core.GuardEngine
+import com.w2018.procmanager.core.ScanPrep
 import com.w2018.procmanager.core.EventHub
 import com.w2018.procmanager.core.EventLog
 import com.w2018.procmanager.core.LogEvent
@@ -49,6 +51,7 @@ data class Cfg(
     val boostRule: Boolean = false,
     val boostBattery: Int = 20,
     val boostTemp: Int = 45,
+    val buffer: Int = 3,
 ) {
     companion object {
         fun from(s: SettingsStore) = Cfg(
@@ -59,6 +62,7 @@ data class Cfg(
             s.scanInterval, s.adbFreqLimit, s.preset, s.monitorMode,
             s.memStop, s.cpuStop, s.cacheClean, s.cacheIdleMin,
             s.memPressureRule, s.memPressurePct, s.boostRule, s.boostBatteryPct, s.boostTempC,
+            s.bufferMin,
         )
 
         fun write(s: SettingsStore, c: Cfg) {
@@ -76,6 +80,7 @@ data class Cfg(
             s.cacheClean = c.cacheClean; s.cacheIdleMin = c.cacheIdle
             s.memPressureRule = c.memPressureRule; s.memPressurePct = c.memPressurePct
             s.boostRule = c.boostRule; s.boostBatteryPct = c.boostBattery; s.boostTempC = c.boostTemp
+            s.bufferMin = c.buffer
         }
     }
 }
@@ -104,6 +109,9 @@ class AppUi(val app: ProcApp) {
     var whitelist by mutableStateOf(app.settings.whitelist); private set
     var bgStopSet by mutableStateOf(app.settings.bgStopPkgs); private set
     var frozen by mutableStateOf<Set<String>>(app.settings.frozenPkgs); private set
+    /** 被系统「停用」的应用（applicationInfo.enabled=false），用于冻结管理展示与启用。 */
+    var disabledApps by mutableStateOf<List<com.w2018.procmanager.data.model.AppInfo>>(emptyList()); private set
+    val disabledSet: Set<String> get() = disabledApps.map { it.packageName }.toSet()
     /** 开机自启广播接收器（仅用于列出「自启动治理」候选应用）。 */
     var bootReceivers by mutableStateOf<List<BootReceiverInfo>>(emptyList()); private set
     /** 已被 AppOps 限制后台运行（禁止自启）的包名集合。 */
@@ -111,6 +119,8 @@ class AppUi(val app: ProcApp) {
     var logs by mutableStateOf<List<LogEvent>>(emptyList()); private set
     var blocked by mutableStateOf(0); private set
     var freedKb by mutableStateOf(0L); private set
+    /** 最近一次清理释放的内存（非累计）。 */
+    var lastFreedKb by mutableStateOf(0L); private set
     var refreshing by mutableStateOf(false); private set
     var a11y by mutableStateOf(false); private set
     /** 内存使用率历史（近 12 次刷新），用于趋势图真实数据。 */
@@ -131,13 +141,14 @@ class AppUi(val app: ProcApp) {
         }
     }
 
-    fun reloadStats() { blocked = app.stats.blocked; freedKb = app.stats.freedKb }
+    fun reloadStats() { blocked = app.stats.blocked; freedKb = app.stats.freedKb; lastFreedKb = app.stats.lastFreedKb }
 
     suspend fun refresh() {
         refreshing = true
         try {
             snapshot = app.repo.snapshot()
             frozen = app.settings.frozenPkgs
+            disabledApps = runCatching { app.repo.disabledApps() }.getOrDefault(emptyList())
         } catch (_: Throwable) {}
         shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
         monitored = app.settings.monitored
@@ -241,6 +252,12 @@ class AppUi(val app: ProcApp) {
         return app.engine.previewCandidates()
     }
 
+    /** 扫描过程动画用的准备数据（目标清单 + 命中项）。 */
+    suspend fun prepareScan(): ScanPrep? {
+        if (!channelReady) return null
+        return runCatching { app.engine.prepareScan() }.getOrNull()
+    }
+
     /** 清理扫描结果中选中的候选。 */
     suspend fun cleanCandidates(list: List<KillCandidate>): String {
         if (!channelReady) return "未连接权限通道，请先在设置中连接"
@@ -286,6 +303,7 @@ class AppUi(val app: ProcApp) {
         if (ok) {
             app.settings.setFrozen(pkg, freeze)
             frozen = app.settings.frozenPkgs
+            disabledApps = runCatching { app.repo.disabledApps() }.getOrDefault(emptyList())
             EventLog.add(com.w2018.procmanager.core.LogType.RULE, (if (freeze) "冻结 " else "恢复 ") + pkg,
                 if (freeze) "pm disable-user" else "pm enable")
         }

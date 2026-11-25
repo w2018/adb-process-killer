@@ -98,6 +98,12 @@ fun RulesScreen(ui: AppUi) {
         // 执行控制
         GroupCard {
             GroupLabel("执行控制")
+            SliderRow("后台缓冲时间", ui.cfg.buffer, 0, 30, "分钟") { ui.setCfg { c -> c.copy(buffer = it) } }
+            Text("进入后台超过该时长才按「内存/CPU 阈值」清理；回到前台立即刷新计时，避免误杀临时切后台的应用。",
+                color = C.muted, fontSize = 10.5.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(top = 10.dp, bottom = 12.dp),
+                lineHeight = 15.sp)
+            Divider()
             SliderRow("同一应用冷却时间", ui.cfg.cooldown, 5, 300, "秒") { ui.setCfg { c -> c.copy(cooldown = it) } }
         }
         Spacer(Modifier.height(16.dp))
