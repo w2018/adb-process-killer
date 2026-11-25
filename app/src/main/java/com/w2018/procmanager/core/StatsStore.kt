@@ -72,6 +72,22 @@ class StatsStore(context: Context) {
         scans = scans + 1
     }
 
+    /** 每个应用累计被清理的次数（长期保留，用于排行榜）。键前缀 kill_。 */
+    fun killsOf(pkg: String): Int = sp.getInt("kill_$pkg", 0)
+
+    fun addKills(pkgs: List<String>) {
+        if (pkgs.isEmpty()) return
+        sp.edit {
+            pkgs.distinct().forEach { p -> putInt("kill_$p", sp.getInt("kill_$p", 0) + 1) }
+        }
+    }
+
+    /** 读取全部应用清理次数（pkg -> 次数）。 */
+    fun killCounts(): Map<String, Int> = sp.all
+        .filterKeys { it.startsWith("kill_") && it.length > 5 }
+        .mapKeys { it.key.removePrefix("kill_") }
+        .mapValues { (it.value as? Int) ?: 0 }
+
     fun resetToday() {
         sp.edit {
             putString("day", today())

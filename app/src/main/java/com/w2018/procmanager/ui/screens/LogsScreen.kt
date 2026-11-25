@@ -25,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,19 +44,24 @@ import com.w2018.procmanager.ui.components.LocalToast
 import com.w2018.procmanager.ui.theme.C
 
 @Composable
-fun LogsScreen(ui: AppUi, initialFilter: String? = null, onFilterConsumed: () -> Unit = {}) {
-    var filter by remember { mutableStateOf(initialFilter ?: "all") }
+fun LogsScreen(ui: AppUi, initialFilter: String? = null, onClose: () -> Unit = {}, onFilterConsumed: () -> Unit = {}) {
+    var filter by rememberSaveable { mutableStateOf(initialFilter ?: "all") }
     LaunchedEffect(initialFilter) {
         if (initialFilter != null) { filter = initialFilter; onFilterConsumed() }
     }
     val listState = rememberLazyListState()
-    LaunchedEffect(filter) { listState.scrollToItem(0) }
+    var lastFilterKey by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(filter) {
+        if (filter != lastFilterKey) { lastFilterKey = filter; listState.scrollToItem(0) }
+    }
     val toast = LocalToast.current
     val confirm = LocalConfirm.current
     val logs = ui.logs.filter { filter == "all" || it.type.key == filter }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBtn("back") { onClose() }
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("事件日志", color = C.text, fontSize = 19.sp, fontWeight = FontWeight.ExtraBold)
                 Text("共 ${ui.logs.size} 条记录 · 本次运行内记录，最多 200 条", color = C.text2, fontSize = 11.sp)

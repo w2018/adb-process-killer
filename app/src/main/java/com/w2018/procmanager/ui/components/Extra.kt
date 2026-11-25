@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.AcUnit
 import androidx.compose.material.icons.outlined.AccessibilityNew
 import androidx.compose.material.icons.outlined.BatteryStd
@@ -112,6 +114,8 @@ fun icVec(name: String): ImageVector = when (name) {
     "info" -> Icons.Outlined.Info
     "accessibility" -> Icons.Outlined.AccessibilityNew
     "cable" -> Icons.Outlined.Cable
+    "rank" -> Icons.Outlined.EmojiEvents
+    "back" -> Icons.AutoMirrored.Outlined.ArrowBack
     else -> Icons.Outlined.Info
 }
 
@@ -248,7 +252,7 @@ fun MetricCard(icon: String, title: String, num: String, unit: String, delta: St
             Text(title, color = C.text2, fontSize = 11.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
         Row(Modifier.padding(top = 5.dp), verticalAlignment = Alignment.Bottom) {
-            Text(num, color = C.text, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
+            Text(num, color = if (warn) C.warn else C.accent, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
             Text(" $unit", color = C.text2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
         }
         Text(delta, color = if (warn) C.warn else C.success, fontSize = 10.sp,
@@ -286,9 +290,10 @@ fun MiniButton(on: Boolean, onClick: () -> Unit) {
 fun SwitchRow(icon: String, title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(
-            Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)).background(C.card2),
+            Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
+                .background(if (checked) C.accent.copy(alpha = 0.14f) else C.card2),
             contentAlignment = Alignment.Center,
-        ) { Ic(icon, 16, C.text2) }
+        ) { Ic(icon, 16, if (checked) C.accent else C.text2) }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = C.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)

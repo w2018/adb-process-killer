@@ -111,10 +111,14 @@ fun RulesScreen(ui: AppUi) {
         Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("预设方案", color = C.text, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
-        val presetIdx = when (ui.cfg.preset) { "save" -> 0; "perf" -> 2; else -> 1 }
-        SegControl(listOf("省电优先", "均衡", "性能优先"), presetIdx) { i ->
-            ui.applyPreset(when (i) { 0 -> "save"; 2 -> "perf"; else -> "balance" })
-            toast.show("已切换预设方案")
+        val presetIdx = when (ui.cfg.preset) { "save" -> 0; "perf" -> 2; "custom" -> 3; else -> 1 }
+        SegControl(listOf("省电", "均衡", "性能", "自定义"), presetIdx) { i ->
+            when (i) {
+                0 -> { ui.applyPreset("save"); toast.show("已切换：省电") }
+                1 -> { ui.applyPreset("balance"); toast.show("已切换：均衡") }
+                2 -> { ui.applyPreset("perf"); toast.show("已切换：性能") }
+                else -> toast.show("当前为自定义方案，修改任一规则参数即自动归入自定义")
+            }
         }
         Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -123,7 +127,11 @@ fun RulesScreen(ui: AppUi) {
                     ui.resetRules(); toast.show("已恢复默认规则")
                 }
             }, kind = BtnKind.Ghost, modifier = Modifier.weight(1f))
-            ProcButton("保存规则", onClick = { toast.show("规则已保存") },
+            ProcButton("保存规则", onClick = {
+                ui.setCfg { it } // 触发一次预设识别
+                val name = when (ui.cfg.preset) { "save" -> "省电"; "balance" -> "均衡"; "perf" -> "性能"; else -> "自定义" }
+                toast.show("规则已保存：$name")
+            },
                 kind = BtnKind.Primary, modifier = Modifier.weight(1f), leading = { com.w2018.procmanager.ui.components.Ic("check", 16, C.onAccent) })
         }
         Text("规则修改实时保存并生效；单应用可在应用详情中覆盖全局规则", color = C.muted, fontSize = 10.sp,

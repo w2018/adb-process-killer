@@ -8,6 +8,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -173,7 +176,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                 Text("今日守护报告", color = C.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 val managed = if (ui.cfg.monitorMode == "all") (snap?.apps?.count { !it.isSystem } ?: ui.monitored.size) else ui.monitored.size
                 Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Bottom) {
-                    Text("$managed", color = C.text, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("$managed", color = C.accent, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
                     Text(" 个应用受管", color = C.text2, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(bottom = 6.dp))
                 }
@@ -187,7 +190,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                         C.accent
                     )
                     HeroStat("$monCount", "", "监控范围", C.blue)
-                    HeroStat("${snap?.processes?.size ?: 0}", "", "进程总数", C.text)
+                    HeroStat("${snap?.processes?.size ?: 0}", "", "进程总数", C.success)
                 }
             }
         }
@@ -236,7 +239,13 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
         SectionTitle("内存占用趋势", action = {
             Text("最近 12 次采样", color = C.muted, fontSize = 11.sp)
         })
-        MemoryChart(memPct, ui.memHistory)
+        MemoryChart(
+            percent = memPct,
+            history = ui.memHistory,
+            totalMb = (mem?.totalKb ?: 0L) / 1024,
+            usedMb = (((mem?.totalKb ?: 0L) - (mem?.availKb ?: 0L)).coerceAtLeast(0L)) / 1024,
+            availMb = (mem?.availKb ?: 0L) / 1024,
+        )
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("最近事件", action = {
@@ -253,7 +262,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                 if (ui.logs.isEmpty()) {
                     Text("暂无事件", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(16.dp))
                 } else {
-                    ui.logs.take(3).forEach { EventRow(it.type.key, it.title, it.detail, timeText(it.time)) }
+                    ui.logs.take(3).forEach { EventRow(it.type.key, it.title, it.detail, timeText(it.time)) { onOpenLogs(it.type.key) } }
                 }
             }
         }
@@ -431,7 +440,7 @@ private fun StatusCard(icon: String, label: String, value: String, on: Boolean, 
         Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (on) PulseDot(C.success, 6) else DotM(C.danger, 6)
             Spacer(Modifier.width(5.dp))
-            Text(value, color = C.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, color = if (on) C.success else C.danger, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
         }
     }
 }
@@ -460,7 +469,11 @@ private fun SectionTitle(title: String, action: (@Composable () -> Unit)? = null
 }
 
 @Composable
-private fun MemoryChart(percent: Float, history: List<Float>) {
+private fun fmtMem(mb: Long): String =
+    if (mb >= 1024) String.format(Locale.getDefault(), "%.1f GB", mb / 1024f) else "$mb MB"
+
+@Composable
+private fun MemoryChart(percent: Float, history: List<Float>, totalMb: Long = 0L, usedMb: Long = 0L, availMb: Long = 0L) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(C.card)
             .border(1.dp, C.border, RoundedCornerShape(16.dp)).padding(16.dp),
@@ -481,29 +494,46 @@ private fun MemoryChart(percent: Float, history: List<Float>) {
         val hi = (nonNull.maxOrNull() ?: percent).coerceAtLeast(1f)
         val lo = (nonNull.minOrNull() ?: percent).coerceAtLeast(0f)
         val span = (hi - lo).coerceAtLeast(3f)
-        Row(Modifier.fillMaxWidth().height(84.dp).padding(top = 14.dp), verticalAlignment = Alignment.Bottom,
+        // 纵轴参考：峰值 / 最低
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("峰值 ${hi.toInt()}%", color = C.muted, fontSize = 9.sp)
+            Text("最低 ${lo.toInt()}%", color = C.muted, fontSize = 9.sp)
+        }
+        Row(Modifier.fillMaxWidth().height(96.dp).padding(top = 6.dp), verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             slots.forEach { v ->
-                if (v == null) {
-                    Box(Modifier.weight(1f).fillMaxHeight(0.06f).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)).background(C.card2))
-                } else {
-                    val target = (0.15f + 0.85f * ((v - lo) / span)).coerceIn(0.08f, 1f)
-                    val h by animateFloatAsState(target, animationSpec = tween(420), label = "bar")
-                    val hot = v > 85f
-                    Box(
-                        Modifier.weight(1f).fillMaxHeight(h).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
-                            .background(
-                                if (hot) Brush.verticalGradient(listOf(C.warn, C.warn.copy(alpha = 0.2f)))
-                                else Brush.verticalGradient(listOf(C.accent, C.accent.copy(alpha = 0.25f)))
-                            ),
-                    )
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom,
+                ) {
+                    if (v == null) {
+                        Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)).background(C.card2))
+                    } else {
+                        val target = (0.12f + 0.88f * ((v - lo) / span)).coerceIn(0.06f, 1f)
+                        val hDp by animateFloatAsState(10f + 62f * target, animationSpec = tween(420), label = "bar")
+                        val hot = v > 85f
+                        Text("${v.toInt()}", color = if (hot) C.warn else C.text2, fontSize = 8.sp, maxLines = 1)
+                        Spacer(Modifier.height(2.dp))
+                        Box(
+                            Modifier.fillMaxWidth().height(hDp.dp).clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                                .background(
+                                    if (hot) Brush.verticalGradient(listOf(C.warn, C.warn.copy(alpha = 0.2f)))
+                                    else Brush.verticalGradient(listOf(C.accent, C.accent.copy(alpha = 0.25f)))
+                                ),
+                        )
+                    }
                 }
             }
         }
+        // 时间轴：按真实采样间隔（约 1.2 秒/次）标注首时刻 / 采样数 / 当前时刻
+        val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+        val nowMs = System.currentTimeMillis()
+        val firstMs = if (real.isNotEmpty()) nowMs - (real.size - 1).coerceAtLeast(0) * 1200L else nowMs
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("约24秒前", color = C.muted, fontSize = 9.5.sp)
-            Text("", color = C.muted, fontSize = 9.5.sp)
-            Text("现在", color = C.muted, fontSize = 9.5.sp)
+            Text(if (real.isNotEmpty()) fmt.format(Date(firstMs)) else "—", color = C.muted, fontSize = 9.sp)
+            Text("${real.size} 次采样", color = C.muted, fontSize = 9.sp)
+            Text(fmt.format(Date(nowMs)), color = C.muted, fontSize = 9.sp)
         }
         Row(Modifier.fillMaxWidth().padding(top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(88.dp), contentAlignment = Alignment.Center) {
@@ -524,14 +554,15 @@ private fun MemoryChart(percent: Float, history: List<Float>) {
                         size = arcSize, topLeft = Offset(inset, inset))
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("${percent.toInt()}%", color = C.text, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("${percent.toInt()}%", color = C.accent, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                     Text("内存占用", color = C.text2, fontSize = 9.sp)
                 }
             }
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                LegendItem(C.accent, "已用", "${percent.toInt()}%")
-                LegendItem(C.card2, "可用", "${100 - percent.toInt()}%")
+                LegendItem(C.accent, "已用", "${percent.toInt()}% · ${fmtMem(usedMb)}")
+                LegendItem(C.card2, "可用", "${100 - percent.toInt()}% · ${fmtMem(availMb)}")
+                if (totalMb > 0) LegendItem(C.muted, "总计", fmtMem(totalMb))
             }
         }
     }
@@ -549,7 +580,7 @@ private fun LegendItem(color: Color, label: String, value: String) {
 }
 
 @Composable
-fun EventRow(typeKey: String, title: String, sub: String, time: String) {
+fun EventRow(typeKey: String, title: String, sub: String, time: String, onClick: () -> Unit = {}) {
     val (bg, ic) = when (typeKey) {
         "kill" -> C.danger.copy(alpha = 0.15f) to "zap"
         "rule" -> C.warn.copy(alpha = 0.15f) to "snow"
@@ -562,7 +593,7 @@ fun EventRow(typeKey: String, title: String, sub: String, time: String) {
         "channel" -> C.blue
         else -> C.text2
     }
-    Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(32.dp).clip(RoundedCornerShape(9.dp)).background(bg), contentAlignment = Alignment.Center) {
             Ic(ic, 16, fg)
         }

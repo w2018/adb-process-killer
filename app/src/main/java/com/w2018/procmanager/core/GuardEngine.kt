@@ -281,6 +281,7 @@ class GuardEngine(private val app: ProcApp) {
                 )
             }
             app.stats.addBlocked(chosen.size, freed)
+            app.stats.addKills(chosen.values.map { it.pkg })
             if (app.settings.notifyKillList) notifyKillList(chosen.values.map { label(it.pkg) }, freed)
             else if (app.settings.notify) notifyAction("已清理 ${chosen.size} 个后台应用", "约释放 ${freed / 1024}MB · 看门狗自动执行")
             return chosen.size
@@ -385,6 +386,7 @@ class GuardEngine(private val app: ProcApp) {
             EventLog.add(LogType.KILL, "已清理 ${label(c.pkg)}", "${c.reason} · 约释放 ${c.freedKb / 1024}MB")
         }
         app.stats.addBlocked(chosen.size, freed)
+        app.stats.addKills(chosen.map { it.pkg })
         if (app.settings.notifyKillList) notifyKillList(chosen.map { label(it.pkg) }, freed)
         return chosen.size to freed
     }
@@ -419,6 +421,7 @@ class GuardEngine(private val app: ProcApp) {
             }
             if (r.ok || r.exitCode == 0) {
                 app.stats.addBlocked(seen.size, freed)
+                app.stats.addKills(seen.toList())
                 EventLog.add(LogType.KILL, "一键清理", "清理 ${seen.size} 个进程，约释放 ${freed / 1024}MB")
                 if (app.settings.notifyKillList) notifyKillList(seen.map { label(it) }, freed)
             }

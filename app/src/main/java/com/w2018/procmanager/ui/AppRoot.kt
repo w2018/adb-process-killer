@@ -24,8 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,7 @@ import com.w2018.procmanager.ui.screens.AppDetailSheet
 import com.w2018.procmanager.ui.screens.AppsScreen
 import com.w2018.procmanager.ui.screens.DashScreen
 import com.w2018.procmanager.ui.screens.LogsScreen
+import com.w2018.procmanager.ui.screens.RankScreen
 import com.w2018.procmanager.ui.screens.RulesScreen
 import com.w2018.procmanager.ui.screens.ScanScreen
 import com.w2018.procmanager.ui.screens.SettingsScreen
@@ -70,7 +72,7 @@ enum class Tab(val label: String, val icon: androidx.compose.ui.graphics.vector.
     DASH("概览", Icons.Filled.Home),
     APPS("应用", Icons.Filled.Apps),
     RULES("规则", Icons.Filled.Tune),
-    LOGS("日志", Icons.Filled.List),
+    RANK("排行榜", Icons.Filled.Star),
     SET("设置", Icons.Filled.Settings),
 }
 
@@ -82,11 +84,14 @@ fun AppRoot() {
     val app = context.applicationContext as ProcApp
     val ui = remember { AppUi(app) }
     val scope = rememberCoroutineScope()
+    // 记住每个 Tab 的界面状态（滚动位置/筛选/搜索等），切换 Tab 再回来不丢失
+    val tabStateHolder = rememberSaveableStateHolder()
     val activity = context as? android.app.Activity
 
     var tab by remember { mutableStateOf(Tab.DASH) }
     var sheetPkg by remember { mutableStateOf<String?>(null) }
     var logFilterReq by remember { mutableStateOf<String?>(null) }
+    var showLogs by remember { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -127,6 +132,7 @@ fun AppRoot() {
     BackHandler(enabled = true) {
         when {
             scanning -> scanning = false
+            showLogs -> showLogs = false
             sheetPkg != null -> sheetPkg = null
             tab != Tab.DASH -> tab = Tab.DASH
             else -> activity?.finish()
@@ -144,17 +150,21 @@ fun AppRoot() {
                                 transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(140)) },
                                 label = "tabContent",
                             ) { t ->
-                                when (t) {
-                                    Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; tab = Tab.LOGS }, onOpenScan = { scanning = true })
-                                    Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
-                                    Tab.RULES -> RulesScreen(ui)
-                                    Tab.LOGS -> LogsScreen(ui, logFilterReq) { logFilterReq = null }
-                                    Tab.SET -> SettingsScreen(ui)
+                                tabStateHolder.SaveableStateProvider(t.name) {
+                                    when (t) {
+                                        Tab.DASH -> DashScreen(ui, onOpenSettings = { tab = Tab.SET }, onOpenLogs = { f -> logFilterReq = f; showLogs = true }, onOpenScan = { scanning = true })
+                                        Tab.APPS -> AppsScreen(ui) { sheetPkg = it }
+                                        Tab.RULES -> RulesScreen(ui)
+                                        Tab.RANK -> RankScreen(ui) { sheetPkg = it }
+                                        Tab.SET -> SettingsScreen(ui)
+                                    }
                                 }
                             }
                         }
                         ProcTabBar(current = tab, onSelect = { tab = it })
                     }
+                    // 事件日志（全屏覆盖，由首页「最近事件-全部」或事件项进入）
+                    if (showLogs) LogsScreen(ui, logFilterReq, onClose = { showLogs = false }) { logFilterReq = null }
                     // 应用详情底部弹层（覆盖整个界面，包括底部导航）
                     sheetPkg?.let { AppDetailSheet(ui, it) { sheetPkg = null } }
                     // 扫描过程全屏界面（覆盖包括底部导航）

@@ -122,6 +122,8 @@ class AppUi(val app: ProcApp) {
     var freedKb by mutableStateOf(0L); private set
     /** 最近一次清理释放的内存（非累计）。 */
     var lastFreedKb by mutableStateOf(0L); private set
+    /** 每个应用累计被清理次数（pkg -> 次数），用于排行榜。 */
+    var killCounts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
     var refreshing by mutableStateOf(false); private set
     var a11y by mutableStateOf(false); private set
     /** 内存使用率历史（近 12 次刷新），用于趋势图真实数据。 */
@@ -142,7 +144,10 @@ class AppUi(val app: ProcApp) {
         }
     }
 
-    fun reloadStats() { blocked = app.stats.blocked; freedKb = app.stats.freedKb; lastFreedKb = app.stats.lastFreedKb }
+    fun reloadStats() {
+        blocked = app.stats.blocked; freedKb = app.stats.freedKb; lastFreedKb = app.stats.lastFreedKb
+        killCounts = app.stats.killCounts()
+    }
 
     suspend fun refresh(lite: Boolean = false) {
         refreshing = true
@@ -192,7 +197,24 @@ class AppUi(val app: ProcApp) {
     }
 
     fun setCfg(t: (Cfg) -> Cfg) {
-        val n = t(cfg); cfg = n; Cfg.write(app.settings, n)
+        val base = t(cfg)
+        // 规则参数变化后自动识别预设：完全匹配某个预设则归属该预设，否则标记为「自定义」
+        val n = base.copy(preset = detectPreset(base))
+        cfg = n; Cfg.write(app.settings, n)
+    }
+
+    /** 判断当前规则参数是否与某个预设完全一致；都不匹配返回 "custom"。 */
+    private fun detectPreset(c: Cfg): String = when {
+        c.mem == 250 && c.bgTime == 10 && c.cpu == 25 && c.cooldown == 30 && c.buffer == 5 &&
+            c.memStop && !c.cpuStop && !c.cacheClean && c.cacheIdle == 15 &&
+            !c.memPressureRule && !c.boostRule -> "save"
+        c.mem == 180 && c.bgTime == 6 && c.cpu == 18 && c.cooldown == 30 && c.buffer == 3 &&
+            c.memStop && c.cpuStop && c.cacheClean && c.cacheIdle == 10 &&
+            c.memPressureRule && c.memPressurePct == 15 && c.boostRule && c.boostBattery == 20 && c.boostTemp == 45 -> "balance"
+        c.mem == 120 && c.bgTime == 3 && c.cpu == 12 && c.cooldown == 15 && c.buffer == 1 &&
+            c.memStop && c.cpuStop && c.cacheClean && c.cacheIdle == 5 &&
+            c.memPressureRule && c.memPressurePct == 20 && c.boostRule && c.boostBattery == 25 && c.boostTemp == 42 -> "perf"
+        else -> "custom"
     }
 
     fun setScan(sec: Int) = setCfg { it.copy(scan = sec) }
@@ -215,7 +237,7 @@ class AppUi(val app: ProcApp) {
             "save" -> it.copy(
                 preset = "save", mem = 250, bgTime = 10, cpu = 25, cooldown = 30, buffer = 5,
                 memStop = true, cpuStop = false, cacheClean = false, cacheIdle = 15,
-                memPressureRule = false, boostRule = false,
+                memPressureRule = false, memPressurePct = 15, boostRule = false, boostBattery = 20, boostTemp = 45,
             )
             // 性能：阈值更紧、更积极清理保流畅与降温，开启缓存/内存压力/低电高温加速清理
             "perf" -> it.copy(

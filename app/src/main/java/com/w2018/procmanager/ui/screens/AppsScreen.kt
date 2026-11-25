@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -91,9 +92,9 @@ private fun fmtElapsed(sec: Long): String {
 
 @Composable
 fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
-    var filter by remember { mutableStateOf("all") }
-    var search by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf("default") }
+    var filter by rememberSaveable { mutableStateOf("all") }
+    var search by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf("default") }
     val snap = ui.snapshot
     val apps = snap?.apps ?: emptyList()
     val procs = snap?.processes ?: emptyList()
@@ -143,7 +144,11 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
     }
     // 切换筛选/排序/搜索时回到列表顶部
     val listState = rememberLazyListState()
-    LaunchedEffect(filter, sort, search) { listState.scrollToItem(0) }
+    var lastQueryKey by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(filter, sort, search) {
+        val k = "$filter|$sort|$search"
+        if (k != lastQueryKey) { lastQueryKey = k; listState.scrollToItem(0) }
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -251,7 +256,12 @@ private fun AppRow(ui: AppUi, a: AppInfo, p: ProcAgg?, onOpen: (String) -> Unit)
             Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 DotM(if (status == "后台运行") C.success else if (status == "前台") C.accent else C.muted, 6)
                 Spacer(Modifier.width(5.dp))
-                Text(status, color = C.text2, fontSize = 10.5.sp)
+                Text(status, fontSize = 10.5.sp, color = when (status) {
+                    "前台" -> C.accent
+                    "后台运行" -> C.success
+                    "已冻结" -> C.warn
+                    else -> C.muted
+                })
                 Spacer(Modifier.width(10.dp))
                 MetricIcon("memory", "${(p?.memKb ?: 0) / 1024}M")
                 Spacer(Modifier.width(9.dp))
@@ -271,10 +281,11 @@ private fun AppRow(ui: AppUi, a: AppInfo, p: ProcAgg?, onOpen: (String) -> Unit)
 /** 小图标 + 数值（进程指标），用图标替代文字标签。 */
 @Composable
 private fun MetricIcon(icon: String, value: String) {
+    val c = when (icon) { "memory" -> C.blue; "cpu" -> C.warn; "clock" -> C.text2; else -> C.text2 }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Ic(icon, 12, C.muted)
+        Ic(icon, 12, c.copy(alpha = 0.85f))
         Spacer(Modifier.width(2.dp))
-        Text(value, color = C.text2, fontSize = 10.sp)
+        Text(value, color = c, fontSize = 10.sp)
     }
 }
 
@@ -492,7 +503,8 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
 private fun SheetMetric(icon: String, value: String, label: String, modifier: Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Ic(icon, 16, C.text2)
-        Text(value, color = C.text, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+        val vc = when (icon) { "memory" -> C.blue; "cpu" -> C.warn; "clock" -> C.accent; "activity" -> C.success; else -> C.accent }
+        Text(value, color = vc, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
         Text(label, color = C.text2, fontSize = 9.5.sp, modifier = Modifier.padding(top = 1.dp))
     }
 }
