@@ -58,13 +58,40 @@ fun RulesScreen(ui: AppUi) {
         // 立即停止规则
         GroupCard {
             GroupLabel("清理规则")
-            SwitchRow("cpu", "内存/CPU 超限清理", "后台应用内存或 CPU 超过上方阈值时自动终止", ui.cfg.aliveStop) { v -> ui.setCfg { it.copy(aliveStop = v) } }
+            SwitchRow("memory", "内存超限清理", "后台应用内存(PSS)超过上方「内存占用阈值」时终止", ui.cfg.memStop) { v -> ui.setCfg { it.copy(memStop = v) } }
+            Divider()
+            SwitchRow("cpu", "CPU 超限清理", "后台应用 CPU 超过上方「CPU 占用阈值」时终止", ui.cfg.cpuStop) { v -> ui.setCfg { it.copy(cpuStop = v) } }
             Divider()
             SwitchRow("clock", "后台超时清理", "后台停留超过「后台占用时长」后终止", ui.cfg.bgStop) { v -> ui.setCfg { it.copy(bgStop = v) } }
             Divider()
             SwitchRow("lock", "关联唤醒拦截", "清理后短时间内被重新拉起（关联唤醒）则再次终止", ui.cfg.wakeBlock) { v -> ui.setCfg { it.copy(wakeBlock = v) } }
             Divider()
             SwitchRow("star", "常用应用保护", "最近 10 分钟内使用过的应用不自动清理，避免误杀", ui.cfg.freqProtect) { v -> ui.setCfg { it.copy(freqProtect = v) } }
+        }
+        Spacer(Modifier.height(14.dp))
+
+        // 增强规则（条件触发）
+        GroupCard {
+            GroupLabel("增强规则")
+            SwitchRow("snow", "缓存/空进程闲置清理", "缓存档且闲置超时的进程温和回收，误杀低", ui.cfg.cacheClean) { v -> ui.setCfg { it.copy(cacheClean = v) } }
+            if (ui.cfg.cacheClean) {
+                Divider()
+                SliderRow("闲置超过", ui.cfg.cacheIdle, 5, 60, "分钟") { v -> ui.setCfg { it.copy(cacheIdle = v) } }
+            }
+            Divider()
+            SwitchRow("memory", "内存压力触发清理", "系统可用内存低于阈值时，按占用从高到低回收", ui.cfg.memPressureRule) { v -> ui.setCfg { it.copy(memPressureRule = v) } }
+            if (ui.cfg.memPressureRule) {
+                Divider()
+                SliderRow("可用内存低于", ui.cfg.memPressurePct, 5, 40, "%") { v -> ui.setCfg { it.copy(memPressurePct = v) } }
+            }
+            Divider()
+            SwitchRow("battery", "低电量 / 高温触发", "电量过低或电池高温时更积极地回收后台", ui.cfg.boostRule) { v -> ui.setCfg { it.copy(boostRule = v) } }
+            if (ui.cfg.boostRule) {
+                Divider()
+                SliderRow("电量低于", ui.cfg.boostBattery, 5, 50, "%") { v -> ui.setCfg { it.copy(boostBattery = v) } }
+                Divider()
+                SliderRow("温度高于", ui.cfg.boostTemp, 35, 60, "℃") { v -> ui.setCfg { it.copy(boostTemp = v) } }
+            }
         }
         Spacer(Modifier.height(14.dp))
 

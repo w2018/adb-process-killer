@@ -18,6 +18,8 @@ data class ProcInfo(
     val name: String,
     val packageName: String,
     val rssKb: Long,
+    /** 进程 PSS（KB，来自 dumpsys meminfo；0 表示未取到，回退 rssKb）。 */
+    val pssKb: Long = 0,
     val stat: String,
     val cpuPercent: Float,
     val oomCur: Int,

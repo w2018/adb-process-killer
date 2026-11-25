@@ -29,6 +29,29 @@ class SettingsStore(context: Context) {
     // ---- 立即停止规则 ----
     var aliveStop: Boolean
         get() = b("sw_aliveStop", true); set(v) = ib("sw_aliveStop", v)
+    /** 内存超限清理（原「内存/CPU 超限清理」拆分，默认跟随 aliveStop）。 */
+    var memStop: Boolean
+        get() = b("sw_memStop", aliveStop); set(v) = ib("sw_memStop", v)
+    /** CPU 超限清理（默认跟随 aliveStop）。 */
+    var cpuStop: Boolean
+        get() = b("sw_cpuStop", aliveStop); set(v) = ib("sw_cpuStop", v)
+    /** 缓存/空进程闲置清理。 */
+    var cacheClean: Boolean
+        get() = b("sw_cacheClean", false); set(v) = ib("sw_cacheClean", v)
+    var cacheIdleMin: Int
+        get() = i("cfg_cacheIdle", 10); set(v) = ii("cfg_cacheIdle", v)
+    /** 内存压力触发清理（系统可用内存低于阈值时）。 */
+    var memPressureRule: Boolean
+        get() = b("sw_memPressure", false); set(v) = ib("sw_memPressure", v)
+    var memPressurePct: Int
+        get() = i("cfg_memPressurePct", 15); set(v) = ii("cfg_memPressurePct", v)
+    /** 低电量 / 高温触发更积极清理。 */
+    var boostRule: Boolean
+        get() = b("sw_boost", false); set(v) = ib("sw_boost", v)
+    var boostBatteryPct: Int
+        get() = i("cfg_boostBattery", 20); set(v) = ii("cfg_boostBattery", v)
+    var boostTempC: Int
+        get() = i("cfg_boostTemp", 45); set(v) = ii("cfg_boostTemp", v)
     var bgStop: Boolean
         get() = b("sw_bgStop", false); set(v) = ib("sw_bgStop", v)
     var wakeBlock: Boolean

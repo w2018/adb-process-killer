@@ -28,8 +28,20 @@ class RuleContext(
     /** 监控范围：true=全部用户应用（默认）；false=仅 monitored 列表。 */
     val monitorAll: Boolean = true,
     /** 「常用应用保护」命中的包（最近使用过），视为受保护不自动清理。 */
-    val freqProtected: Set<String> = emptySet()
+    val freqProtected: Set<String> = emptySet(),
+    /** 系统可用内存是否处于压力状态（供内存压力规则使用）。 */
+    val memPressure: Boolean = false,
+    /** 是否低电量（供低电量/高温规则使用）。 */
+    val batteryLow: Boolean = false,
+    /** 是否电池高温。 */
+    val tempHigh: Boolean = false
 ) {
+    /** 进程占用：优先 PSS，取不到回退 RSS。 */
+    fun pssOrRss(p: ProcInfo): Long = if (p.pssKb > 0) p.pssKb else p.rssKb
+
+    /** 某应用已在后台停留毫秒（无记录返回 0）。 */
+    fun idleMs(pkg: String): Long = bgSince[pkg]?.let { (now - it).coerceAtLeast(0) } ?: 0L
+
     fun isProtected(pkg: String): Boolean =
         protectedPkgs.contains(pkg) || settings.isWhitelisted(pkg) || freqProtected.contains(pkg)
 

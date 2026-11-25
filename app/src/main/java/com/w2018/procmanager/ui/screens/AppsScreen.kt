@@ -94,9 +94,10 @@ fun AppsScreen(ui: AppUi, onOpenApp: (String) -> Unit) {
         val m = HashMap<String, ProcAgg>()
         procs.forEach { p ->
             val cur = m[p.packageName]
-            if (cur == null) m[p.packageName] = ProcAgg(p.rssKb, p.cpuPercent, p.isForeground, true, p.elapsedSec)
+            val use = if (p.pssKb > 0) p.pssKb else p.rssKb
+            if (cur == null) m[p.packageName] = ProcAgg(use, p.cpuPercent, p.isForeground, true, p.elapsedSec)
             else m[p.packageName] = ProcAgg(
-                cur.memKb + p.rssKb, maxOf(cur.cpu, p.cpuPercent), cur.foreground || p.isForeground, true,
+                cur.memKb + use, maxOf(cur.cpu, p.cpuPercent), cur.foreground || p.isForeground, true,
                 maxOf(cur.elapsedSec, p.elapsedSec)
             )
         }
@@ -261,7 +262,7 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
     val snap = ui.snapshot
     val a = snap?.apps?.find { it.packageName == pkg } ?: return
     val procs = snap.processes.filter { it.packageName == pkg }
-    val memKb = procs.sumOf { it.rssKb }
+    val memKb = procs.sumOf { if (it.pssKb > 0) it.pssKb else it.rssKb }
     val cpu = procs.maxOfOrNull { it.cpuPercent } ?: 0f
     val elapsed = procs.maxOfOrNull { it.elapsedSec } ?: 0L
     val fg = procs.any { it.isForeground }

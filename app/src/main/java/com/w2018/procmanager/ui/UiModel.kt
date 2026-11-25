@@ -39,6 +39,15 @@ data class Cfg(
     val adbFreq: Int,
     val preset: String,
     val monitorMode: String,
+    val memStop: Boolean = true,
+    val cpuStop: Boolean = true,
+    val cacheClean: Boolean = false,
+    val cacheIdle: Int = 10,
+    val memPressureRule: Boolean = false,
+    val memPressurePct: Int = 15,
+    val boostRule: Boolean = false,
+    val boostBattery: Int = 20,
+    val boostTemp: Int = 45,
 ) {
     companion object {
         fun from(s: SettingsStore) = Cfg(
@@ -47,6 +56,8 @@ data class Cfg(
             s.lockLowPower, s.screenOffSave, s.chargeExempt, s.nightMode,
             s.memThreshold, s.bgMinutes, s.cpuThreshold, s.cooldownSec,
             s.scanInterval, s.adbFreqLimit, s.preset, s.monitorMode,
+            s.memStop, s.cpuStop, s.cacheClean, s.cacheIdleMin,
+            s.memPressureRule, s.memPressurePct, s.boostRule, s.boostBatteryPct, s.boostTempC,
         )
 
         fun write(s: SettingsStore, c: Cfg) {
@@ -60,6 +71,10 @@ data class Cfg(
             s.cpuThreshold = c.cpu; s.cooldownSec = c.cooldown
             s.scanInterval = c.scan; s.adbFreqLimit = c.adbFreq
             s.preset = c.preset; s.monitorMode = c.monitorMode
+            s.memStop = c.memStop; s.cpuStop = c.cpuStop
+            s.cacheClean = c.cacheClean; s.cacheIdleMin = c.cacheIdle
+            s.memPressureRule = c.memPressureRule; s.memPressurePct = c.memPressurePct
+            s.boostRule = c.boostRule; s.boostBatteryPct = c.boostBattery; s.boostTempC = c.boostTemp
         }
     }
 }

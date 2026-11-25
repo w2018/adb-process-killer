@@ -93,11 +93,12 @@ class AppRepository(
     // ---------------- CPU ----------------
 
     private object TopCmd {
-        const val CMD = "top -b -n 2 -d 1"
+        // 3 帧取均值，降低瞬时抖动（CPU 规则更稳定）
+        const val CMD = "top -b -n 3 -d 1"
     }
 
     suspend fun cpuInfo(): CpuInfo = withContext(Dispatchers.IO) {
-        val r = channels.run(TopCmd.CMD, timeoutMs = 15000)
+        val r = channels.run(TopCmd.CMD, timeoutMs = 20000)
         parseCpu(r.stdout)
     }
 
@@ -124,12 +125,17 @@ class AppRepository(
         if (psResult.stdout.isBlank()) return@withContext emptyList()
 
         val cpuMap = HashMap<Int, Float>()
-        val top = topText ?: channels.run(TopCmd.CMD, timeoutMs = 15000).stdout
+        val top = topText ?: channels.run(TopCmd.CMD, timeoutMs = 20000).stdout
         parseTopCpu(top, cpuMap)
 
         val oomMap = HashMap<Int, Int>()
         val actResult = channels.run("dumpsys activity processes")
         if (actResult.ok) parseOom(actResult.stdout, oomMap)
+
+        // 进程 PSS（比 RSS 更接近真实占用，dumpsys meminfo 一次获取全部进程）
+        val pssMap = HashMap<Int, Long>()
+        val memRes = channels.run("dumpsys meminfo")
+        if (memRes.ok) parsePss(memRes.stdout, pssMap)
 
         val appMap = appMap()
         val out = ArrayList<ProcInfo>()
@@ -159,7 +165,7 @@ class AppRepository(
             out.add(
                 ProcInfo(
                     pid = pid, ppid = ppid, user = user, name = name, packageName = pkg,
-                    rssKb = rss, stat = stat, cpuPercent = cpuMap[pid] ?: 0f,
+                    rssKb = rss, pssKb = pssMap[pid] ?: 0L, stat = stat, cpuPercent = cpuMap[pid] ?: 0f,
                     oomCur = if (oom == Int.MIN_VALUE) -1000 else oom,
                     isForeground = isForeground, isSystem = isSystem, elapsedSec = elapsed
                 )
@@ -189,6 +195,9 @@ class AppRepository(
     }
 
     private fun parseTopCpu(text: String, into: MutableMap<Int, Float>) {
+        // top 多帧中同一 PID 会出现多次，累加后取均值以降低瞬时抖动
+        val sum = HashMap<Int, Float>()
+        val cnt = HashMap<Int, Int>()
         for (raw in text.lineSequence()) {
             val line = raw.trim()
             if (line.isEmpty() || !line[0].isDigit()) continue
@@ -196,7 +205,27 @@ class AppRepository(
             if (t.size < 9) continue
             val pid = t[0].toIntOrNull() ?: continue
             val cpu = t[8].toFloatOrNull() ?: continue
-            into[pid] = cpu
+            sum[pid] = (sum[pid] ?: 0f) + cpu
+            cnt[pid] = (cnt[pid] ?: 0) + 1
+        }
+        for ((pid, s) in sum) into[pid] = s / (cnt[pid] ?: 1)
+    }
+
+    /** 解析 dumpsys meminfo 的「Total PSS by process」小节，按 pid 汇总 PSS(KB)。 */
+    private fun parsePss(text: String, into: MutableMap<Int, Long>) {
+        var inSection = false
+        val re = Regex("^\\s*([\\d,]+)K:\\s+.*\\(pid (\\d+)")
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            if (line.startsWith("Total PSS by process")) { inSection = true; continue }
+            if (!inSection) continue
+            if (line.startsWith("Total PSS by")) { inSection = false; continue }
+            if (line.isEmpty()) continue
+            re.find(raw)?.let {
+                val pss = it.groupValues[1].replace(",", "").toLongOrNull() ?: return@let
+                val pid = it.groupValues[2].toIntOrNull() ?: return@let
+                into[pid] = (into[pid] ?: 0L) + pss
+            }
         }
     }
 
@@ -226,7 +255,7 @@ class AppRepository(
             // 进程/CPU 需要 shell 才能获取，此处留空而不报错，避免界面卡顿。
             return@withContext Snapshot(apps, emptyList(), memInfo(), CpuInfo.EMPTY, System.currentTimeMillis())
         }
-        val top = channels.run(TopCmd.CMD, timeoutMs = 15000).stdout
+        val top = channels.run(TopCmd.CMD, timeoutMs = 20000).stdout
         val procs = processes(top)
         val mem = memInfo()
         val cpu = parseCpu(top)

@@ -11,13 +11,17 @@ import android.view.inputmethod.InputMethodManager
 import androidx.core.app.NotificationCompat
 import com.w2018.procmanager.ProcApp
 import com.w2018.procmanager.core.rule.BackgroundTimeRule
+import com.w2018.procmanager.core.rule.CacheIdleRule
 import com.w2018.procmanager.core.rule.CpuRule
 import com.w2018.procmanager.core.rule.KillCandidate
+import com.w2018.procmanager.core.rule.LowBatteryRule
+import com.w2018.procmanager.core.rule.MemPressureRule
 import com.w2018.procmanager.core.rule.MemoryRule
 import com.w2018.procmanager.core.rule.PerAppRule
 import com.w2018.procmanager.core.rule.Rule
 import com.w2018.procmanager.core.rule.RuleContext
 import com.w2018.procmanager.core.rule.WakeBlockRule
+import com.w2018.procmanager.data.model.MemInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -43,7 +47,8 @@ class GuardEngine(private val app: ProcApp) {
     private val bgSince = HashMap<String, Long>()
     private val lastKilled = HashMap<String, Long>()
     private val rules: List<Rule> = listOf(
-        PerAppRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule()
+        PerAppRule(), BackgroundTimeRule(), MemoryRule(), CpuRule(), WakeBlockRule(),
+        CacheIdleRule(), MemPressureRule(), LowBatteryRule()
     )
     private val scanTimes = ArrayDeque<Long>()
     /** 最近使用（前台出现过）的应用及时间戳，用于「常用应用保护」。 */
@@ -151,6 +156,24 @@ class GuardEngine(private val app: ProcApp) {
         return true
     }
 
+    /** 系统可用内存是否低于「内存压力阈值」（仅当开启内存压力规则时返回 true）。 */
+    private fun memPressureOf(mem: MemInfo): Boolean {
+        if (!app.settings.memPressureRule) return false
+        val availPct = if (mem.totalKb > 0) mem.availKb.toFloat() * 100f / mem.totalKb else 100f
+        return availPct < app.settings.memPressurePct
+    }
+
+    /** 读取电池电量与温度，返回 (是否低电量, 是否高温)。 */
+    private fun batteryState(): Pair<Boolean, Boolean> = runCatching {
+        val i = app.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = i?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = i?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val temp = i?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0
+        val pct = if (level >= 0 && scale > 0) level * 100 / scale else 100
+        val tempC = temp / 10.0
+        (pct <= app.settings.boostBatteryPct) to (tempC >= app.settings.boostTempC)
+    }.getOrDefault(false to false)
+
     /** 「常用应用保护」：最近 10 分钟内使用过的应用集合（未开启则返回空）。 */
     private fun recentlyUsed(): Set<String> {
         if (!app.settings.freqProtect) return emptySet()
@@ -175,10 +198,13 @@ class GuardEngine(private val app: ProcApp) {
                 else bgSince.putIfAbsent(p.packageName, now)
             }
             val recent = recentlyUsed()
+            val (bLow, tHigh) = batteryState()
             val ctx = RuleContext(snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
                 perApp = { app.settings.getPerApp(it) },
                 monitorAll = app.settings.monitorMode == "all",
-                freqProtected = recent)
+                freqProtected = recent,
+                memPressure = memPressureOf(snap.mem),
+                batteryLow = bLow, tempHigh = tHigh)
             val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
             val killed = execute(candidates, fg, now, recent)
             if (killed == 0 && eventDriven && now - lastEventLog > 8_000L) {
@@ -242,11 +268,14 @@ class GuardEngine(private val app: ProcApp) {
             else bgSince.putIfAbsent(p.packageName, now)
         }
         val recent = recentlyUsed()
+        val (bLow, tHigh) = batteryState()
         val ctx = RuleContext(
             snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
             perApp = { app.settings.getPerApp(it) },
             monitorAll = app.settings.monitorMode == "all",
-            freqProtected = recent
+            freqProtected = recent,
+            memPressure = memPressureOf(snap.mem),
+            batteryLow = bLow, tempHigh = tHigh
         )
         val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
         val cooldownMs = app.settings.cooldownSec * 1000L
