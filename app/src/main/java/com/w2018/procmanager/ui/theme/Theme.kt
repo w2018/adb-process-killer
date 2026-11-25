@@ -5,7 +5,6 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
@@ -23,8 +22,8 @@ object ThemeState {
  * 主题切换通过 ProcTheme 中的 key(dark) 强制整棵 UI 重组，保证所有静态读取的颜色即时更新。
  */
 object C {
-    /** 当前是否深色主题（由 ProcTheme 在组合前设置）。 */
-    var dark: Boolean = true
+    /** 当前是否深色主题（Compose 可观察状态：主题变化时自动重组所有读取 C 的组件，且不重建界面状态）。 */
+    var dark by mutableStateOf(true)
 
     val bg get() = if (dark) Color(0xFF0B0F16) else Color(0xFFF3F5F9)
     val bg2 get() = if (dark) Color(0xFF111722) else Color(0xFFFFFFFF)
@@ -65,7 +64,7 @@ fun ProcTheme(content: @Composable () -> Unit) {
         else -> sysDark
     }
     C.dark = dark
-    key(dark) {
-        MaterialTheme(colorScheme = scheme(dark), content = content)
-    }
+    // 不使用 key()：C.dark 已是可观察状态，颜色变化会自动触发重组，
+    // 避免整棵 UI 被重建导致闪烁并丢失当前页签（回到首页）。
+    MaterialTheme(colorScheme = scheme(dark), content = content)
 }

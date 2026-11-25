@@ -116,7 +116,7 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: () -> Uni
                     )
                 }
             }
-            IconBtn("bell", badge = true) { toast.show("暂无新通知") }
+            IconBtn("bell", badge = ui.logs.any { it.type == com.w2018.procmanager.core.LogType.KILL || it.type == com.w2018.procmanager.core.LogType.RULE }) { onOpenLogs() }
         }
 
         // 未连接提示条
