@@ -34,6 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -375,8 +377,21 @@ private fun ResultsList(ctrl: ScanController, modifier: Modifier) {
                 )
             }
         } else {
+            // 结果过多时分页展示（首批 40 项），避免一次构建过多行，保障滚动流畅
+            var expanded by remember { mutableStateOf(false) }
+            val pageSize = 40
+            val shown = if (expanded) st.results else st.results.take(pageSize)
             LazyColumn(Modifier.fillMaxSize().padding(vertical = 4.dp)) {
-                items(st.results, key = { it.pkg }) { c -> ResultRow(c) }
+                items(shown, key = { it.pkg }) { c -> ResultRow(c) }
+                if (!expanded && st.results.size > pageSize) {
+                    item {
+                        Box(
+                            Modifier.fillMaxWidth().padding(10.dp).clip(RoundedCornerShape(10.dp))
+                                .background(C.card2).clickable { expanded = true }.padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("显示全部 ${st.results.size} 项", color = C.accent, fontSize = 12.sp) }
+                    }
+                }
             }
         }
     }

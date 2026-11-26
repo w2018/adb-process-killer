@@ -177,7 +177,7 @@ fun avatarLetter(label: String, pkg: String): String =
 
 /** 应用图标内存缓存：避免滚动时对每个新行在主线程做 PackageManager IPC + Bitmap 解码造成卡顿。 */
 private object IconCache {
-    private val cache = LruCache<String, ImageBitmap>(160)
+    private val cache = LruCache<String, ImageBitmap>(80)
     private val missing = java.util.Collections.newSetFromMap(
         java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     )
