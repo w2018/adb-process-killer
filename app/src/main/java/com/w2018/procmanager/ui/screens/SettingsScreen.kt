@@ -116,9 +116,7 @@ fun SettingsScreen(ui: AppUi) {
             SetDivider()
             SliderRow("扫描频率上限", ui.cfg.adbFreq, 5, 60, "次/分") { v -> ui.setCfg { it.copy(adbFreq = v) } }
             SetDivider()
-            SwitchRow("lock", "CPU 锁按需持有", "仅扫描瞬间短时持锁并超时释放", ui.cfg.lockLowPower) { v -> ui.setCfg { it.copy(lockLowPower = v) } }
-            SetDivider()
-            SwitchRow("moon", "锁屏深度省电", "锁屏后自动降低扫描频率", ui.cfg.screenOffSave) { v -> ui.setCfg { it.copy(screenOffSave = v) } }
+            SwitchRow("moon", "锁屏深度省电", "锁屏后暂停扫描（充电且开启充电豁免时除外）", ui.cfg.screenOffSave) { v -> ui.setCfg { it.copy(screenOffSave = v) } }
             SetDivider()
             SwitchRow("battery", "充电豁免", "充电时不执行清理，避免干扰", ui.cfg.chargeExempt) { v -> ui.setCfg { it.copy(chargeExempt = v) } }
             SetDivider()
@@ -258,7 +256,7 @@ fun SettingsScreen(ui: AppUi) {
             SetDivider()
             RowItem("power", "自启动治理", "禁止应用开机自启，减少后台占用", "") { showAutoStart = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.2.6 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.2.7 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -418,7 +416,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.2.6", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.2.7", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",

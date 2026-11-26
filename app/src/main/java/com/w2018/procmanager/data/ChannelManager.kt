@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 enum class ChannelType { NONE, SHIZUKU, ADB }
 
@@ -32,12 +34,14 @@ class ChannelManager(
     @Volatile
     private var active: ShellExecutor? = null
 
+    /** 串行化所有 shell 调用：引擎扫描 / UI 周期刷新 / 设备信息 / 调试并发调用同一 ADB 连接会互相干扰。 */
+    private val runMutex = Mutex()
+
     fun current(): ShellExecutor? = active
 
     private fun publish(type: ChannelType, label: String, detail: String, ready: Boolean): ChannelState {
         val s = ChannelState(type, label, detail, ready)
         _state.value = s
-        if (ready) settings.lastChannel = type.name.lowercase()
         return s
     }
 
@@ -125,10 +129,10 @@ class ChannelManager(
     }
 
     /** 统一执行入口。未连接直接返回错误，不再被动触发全量扫描（避免卡顿）。 */
-    suspend fun run(cmd: String, timeoutMs: Long = 20000): ShellResult {
-        val ex = active ?: return ShellResult.error("未连接权限通道，请先在设置中连接")
+    suspend fun run(cmd: String, timeoutMs: Long = 20000): ShellResult = runMutex.withLock {
+        val ex = active ?: return@withLock ShellResult.error("未连接权限通道，请先在设置中连接")
         // 注意：单条命令失败（超时/非零退出）不代表通道断开，不能在此重置通道状态，
         // 否则周期刷新时的偶发失败会让 UI 反复从「已连接」跳回「未连接」。
-        return ex.run(cmd, timeoutMs)
+        ex.run(cmd, timeoutMs)
     }
 }

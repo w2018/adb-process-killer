@@ -169,9 +169,6 @@ class GuardEngine(private val app: ProcApp) {
         if (!screenOn && app.settings.screenOffSave && !(charging && app.settings.chargeExempt)) {
             return false
         }
-        if (app.settings.lockLowPower && !screenOn && !charging) {
-            return false
-        }
         return true
     }
 
@@ -334,40 +331,6 @@ class GuardEngine(private val app: ProcApp) {
         return ScanPrep(targets, hits)
     }
 
-    /**
-     * 立即扫描：执行一遍规则，不直接清理，返回“符合规则、可清理”的候选列表，供 UI 弹窗展示。
-     */
-    suspend fun previewCandidates(): List<KillCandidate> {
-        val snap = app.repo.snapshot()
-        val now = System.currentTimeMillis()
-        val fg = EventHub.foregroundPackage.value
-        val procs = snap.processes.filter { it.user.startsWith("u0_") && it.packageName.isNotBlank() }
-        val present = procs.map { it.packageName }.toHashSet()
-        bgSince.keys.retainAll { it in present }
-        for (p in procs) {
-            if (p.isForeground || p.packageName == fg) bgSince.remove(p.packageName)
-            else bgSince.putIfAbsent(p.packageName, now)
-        }
-        val (bLow, tHigh) = batteryState()
-        val ctx = RuleContext(
-            snap, app.settings, fg, bgSince, lastKilled, now, protected, app.settings.monitored,
-            perApp = { app.settings.getPerApp(it) },
-            monitorAll = app.settings.monitorMode == "all",
-            memPressure = memPressureOf(snap.mem),
-            batteryLow = bLow, tempHigh = tHigh
-        )
-        val candidates = rules.filter { it.enabled(app.settings) }.flatMap { it.evaluate(ctx) }
-        val cooldownMs = app.settings.cooldownSec * 1000L
-        return candidates
-            .filter { c ->
-                c.pkg != fg && c.pkg !in protected && !app.settings.isWhitelisted(c.pkg) &&
-                    autoKillable(c.pkg) &&
-                    (lastKilled[c.pkg]?.let { now - it < cooldownMs } != true)
-            }
-            .distinctBy { it.pkg }
-            .sortedByDescending { it.freedKb }
-    }
-
     /** 对指定候选逐项执行清理（来自“立即扫描”弹窗选择）。 */
     suspend fun killCandidates(list: List<KillCandidate>): Pair<Int, Long> {
         val chosen = list.distinctBy { it.pkg }
@@ -399,7 +362,8 @@ class GuardEngine(private val app: ProcApp) {
             val fg = EventHub.foregroundPackage.value
             val chosen = snap.processes.filter {
                 it.user.startsWith("u0_") && it.packageName.isNotBlank() &&
-                    !it.isForeground && it.packageName != fg &&
+                    // 手动「一键清理」：仅排除真正前台(adj<=100)，允许清理可感知(200)后台进程，避免用户点了清不动
+                    it.oomCur > 100 && it.packageName != fg &&
                     it.packageName !in protected && !app.settings.isWhitelisted(it.packageName) &&
                     autoKillable(it.packageName)
             }

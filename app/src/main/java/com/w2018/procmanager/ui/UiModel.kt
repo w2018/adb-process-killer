@@ -9,9 +9,7 @@ import com.w2018.procmanager.core.ScanPrep
 import com.w2018.procmanager.core.EventHub
 import com.w2018.procmanager.core.EventLog
 import com.w2018.procmanager.core.LogEvent
-import com.w2018.procmanager.core.rule.KillCandidate
 import com.w2018.procmanager.data.BootReceiverInfo
-import com.w2018.procmanager.data.model.AppInfo
 import com.w2018.procmanager.data.SettingsStore
 import com.w2018.procmanager.data.model.Snapshot
 import kotlinx.coroutines.CoroutineScope
@@ -27,11 +25,8 @@ data class Cfg(
     val autoStart: Boolean,
     val notify: Boolean,
     val notifyKillList: Boolean = true,
-    val aliveStop: Boolean,
     val bgStop: Boolean,
     val wakeBlock: Boolean,
-    val freqProtect: Boolean,
-    val lockLowPower: Boolean,
     val screenOffSave: Boolean,
     val chargeExempt: Boolean,
     val nightMode: Boolean,
@@ -57,8 +52,8 @@ data class Cfg(
     companion object {
         fun from(s: SettingsStore) = Cfg(
             s.guardian, s.watchdog, s.autoStart, s.notify, s.notifyKillList,
-            s.aliveStop, s.bgStop, s.wakeBlock, s.freqProtect,
-            s.lockLowPower, s.screenOffSave, s.chargeExempt, s.nightMode,
+            s.bgStop, s.wakeBlock,
+            s.screenOffSave, s.chargeExempt, s.nightMode,
             s.memThreshold, s.bgMinutes, s.cpuThreshold, s.cooldownSec,
             s.scanInterval, s.adbFreqLimit, s.preset, s.monitorMode,
             s.memStop, s.cpuStop, s.cacheClean, s.cacheIdleMin,
@@ -69,9 +64,9 @@ data class Cfg(
         fun write(s: SettingsStore, c: Cfg) {
             s.guardian = c.guardian; s.watchdog = c.watchdog
             s.autoStart = c.autoStart; s.notify = c.notify; s.notifyKillList = c.notifyKillList
-            s.aliveStop = c.aliveStop; s.bgStop = c.bgStop
-            s.wakeBlock = c.wakeBlock; s.freqProtect = c.freqProtect
-            s.lockLowPower = c.lockLowPower; s.screenOffSave = c.screenOffSave
+            s.bgStop = c.bgStop
+            s.wakeBlock = c.wakeBlock
+            s.screenOffSave = c.screenOffSave
             s.chargeExempt = c.chargeExempt; s.nightMode = c.nightMode
             s.memThreshold = c.mem; s.bgMinutes = c.bgTime
             s.cpuThreshold = c.cpu; s.cooldownSec = c.cooldown
@@ -340,29 +335,19 @@ class AppUi(val app: ProcApp) {
         return if (n == 0) "当前没有可清理的后台应用" else "已清理 $n 个后台应用，释放 ${freed / 1024} MB"
     }
 
-    /** 立即扫描：执行一遍规则，返回可清理候选（不直接清理）。 */
-    suspend fun scanCandidates(): List<KillCandidate> {
-        if (!channelReady) return emptyList()
-        return app.engine.previewCandidates()
-    }
-
     /** 扫描过程动画用的准备数据（目标清单 + 命中项）。 */
     suspend fun prepareScan(): ScanPrep? {
         if (!channelReady) return null
         return runCatching { app.engine.prepareScan() }.getOrNull()
     }
 
-    /** 清理扫描结果中选中的候选。 */
-    suspend fun cleanCandidates(list: List<KillCandidate>): String {
+    /** 清理扫描结果中选中的候选（扫描动画界面命中项）。 */
+    suspend fun cleanCandidates(list: List<com.w2018.procmanager.core.rule.KillCandidate>): String {
         if (!channelReady) return "未连接权限通道，请先在设置中连接"
         val (n, freed) = app.engine.killCandidates(list)
         reloadStats()
         return if (n == 0) "未清理任何应用" else "已清理 $n 个应用，释放 ${freed / 1024} MB"
     }
-
-    /** 已冻结应用列表。 */
-    fun frozenApps(): List<AppInfo> =
-        (snapshot?.apps ?: emptyList()).filter { frozen.contains(it.packageName) }
 
     /** 刷新开机自启接收器列表与后台限制状态。 */
     fun refreshBoot() = scope.launch {

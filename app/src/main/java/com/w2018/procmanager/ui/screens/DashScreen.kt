@@ -59,7 +59,6 @@ import com.w2018.procmanager.ui.components.Ic
 import com.w2018.procmanager.ui.components.IconBtn
 import com.w2018.procmanager.ui.components.LocalConfirm
 import com.w2018.procmanager.ui.components.LocalToast
-import com.w2018.procmanager.core.rule.KillCandidate
 import com.w2018.procmanager.data.model.AppInfo
 import com.w2018.procmanager.ui.components.AppIcon
 import com.w2018.procmanager.ui.components.BtnKind
@@ -272,58 +271,6 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
 
     if (showFreeze) {
         FreezeManageDialog(ui = ui, ctx = ctx, onClose = { showFreeze = false })
-    }
-}
-
-@Composable
-private fun ScanResultDialog(
-    ui: AppUi,
-    list: List<KillCandidate>,
-    onClose: () -> Unit,
-    onCleaned: () -> Unit,
-) {
-    val toast = LocalToast.current
-    val scope = rememberCoroutineScope()
-    val apps = ui.snapshot?.apps ?: emptyList()
-    fun labelOf(pkg: String) = apps.firstOrNull { it.packageName == pkg }?.label ?: pkg
-    var remaining by remember { mutableStateOf(list) }
-    Dialog(onDismissRequest = onClose) {
-        Box(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(C.card)
-                .border(1.dp, C.border, RoundedCornerShape(18.dp)).padding(16.dp),
-        ) {
-            Column {
-                Text("扫描结果", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text("符合规则的后台应用 ${remaining.size} 个，可逐项或全部清理",
-                    color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
-                Spacer(Modifier.height(10.dp))
-                LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(remaining, key = { it.pkg }) { c ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(labelOf(c.pkg), color = C.text, fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold, maxLines = 1)
-                                Text("${c.reason} · ${c.freedKb / 1024}MB", color = C.text2, fontSize = 10.5.sp, maxLines = 1)
-                            }
-                            ProcButton("清理", kind = BtnKind.Danger, onClick = {
-                                scope.launch {
-                                    toast.show(ui.cleanCandidates(listOf(c)))
-                                    remaining = remaining.filter { it.pkg != c.pkg }
-                                    if (remaining.isEmpty()) onCleaned()
-                                }
-                            })
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    ProcButton("关闭", kind = BtnKind.Ghost, modifier = Modifier.weight(1f), onClick = onClose)
-                    ProcButton("全部清理", kind = BtnKind.Primary, modifier = Modifier.weight(1f), onClick = {
-                        scope.launch { toast.show(ui.cleanCandidates(remaining)); onCleaned() }
-                    })
-                }
-            }
-        }
     }
 }
 

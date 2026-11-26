@@ -33,8 +33,6 @@ class RuleContext(
     val batteryLow: Boolean = false,
     /** 是否电池高温。 */
     val tempHigh: Boolean = false,
-    /** 全局后台缓冲时长(ms)：进入后台超过此时长才按内存/CPU 阈值清理。 */
-    val bufferMs: Long = settings.bufferMin * 60_000L
 ) {
     /** 进程占用：优先 PSS，取不到回退 RSS。 */
     fun pssOrRss(p: ProcInfo): Long = if (p.pssKb > 0) p.pssKb else p.rssKb
