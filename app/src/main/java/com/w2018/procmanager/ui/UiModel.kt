@@ -143,6 +143,7 @@ class AppUi(val app: ProcApp) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     init {
+        bgRestricted = app.settings.autoStartBlocked
         runCatching {
             Shizuku.addRequestPermissionResultListener { _, _ ->
                 shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
@@ -393,20 +394,23 @@ class AppUi(val app: ProcApp) {
         return if (n == 0) "未清理任何应用" else "已清理 $n 个应用，释放 ${freed / 1024} MB"
     }
 
-    /** 刷新开机自启接收器列表与后台限制状态。 */
+    /** 刷新开机自启接收器列表，并从本地记录同步已禁止后台自启的集合。 */
     fun refreshBoot() = scope.launch {
         bootReceivers = runCatching { app.repo.bootReceivers() }.getOrDefault(emptyList())
-        bgRestricted = runCatching { app.repo.bgRestrictedPkgs() }.getOrDefault(emptySet())
+        bgRestricted = app.settings.autoStartBlocked
     }
 
-    /** 该应用是否已禁止开机自启（其后台运行已被 AppOps 限制）。 */
+    /** 该应用是否已禁止后台自启。 */
     fun isAutoStartBlocked(pkg: String): Boolean = bgRestricted.contains(pkg)
 
-    /** 禁止/恢复开机自启：通过 AppOps 限制/恢复该应用后台运行（不冻结、不改组件）。 */
+    /** 禁止/恢复后台自启：对系统 AppOps 限制/恢复该应用后台运行，并记录本地状态（立即刷新 UI、跨重启一致）。 */
     suspend fun setAutoStartBlocked(pkg: String, blocked: Boolean): Boolean {
         if (!channelReady) return false
         val ok = app.repo.setBgRestricted(pkg, blocked)
-        refreshBoot()
+        if (ok) {
+            app.settings.setAutoStartBlocked(pkg, blocked)
+            bgRestricted = app.settings.autoStartBlocked
+        }
         return ok
     }
 

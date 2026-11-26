@@ -146,6 +146,18 @@ class SettingsStore(context: Context) {
         bgStopPkgs = s
     }
 
+    // ---- 禁止后台自启（本应用记录，保证 UI 与状态一致、跨重启持久） ----
+    var autoStartBlocked: Set<String>
+        get() = sp.getStringSet("autoStartBlocked", emptySet()) ?: emptySet()
+        set(v) = sp.edit { putStringSet("autoStartBlocked", v) }
+
+    fun isAutoStartBlocked(pkg: String) = autoStartBlocked.contains(pkg)
+    fun setAutoStartBlocked(pkg: String, blocked: Boolean) {
+        val s = autoStartBlocked.toMutableSet()
+        if (blocked) s.add(pkg) else s.remove(pkg)
+        autoStartBlocked = s
+    }
+
     // ---- 单应用独立规则（0 表示跟随全局） ----
     data class PerAppCfg(
         val enabled: Boolean = false,

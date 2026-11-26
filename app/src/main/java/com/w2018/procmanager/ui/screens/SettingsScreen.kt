@@ -254,9 +254,9 @@ fun SettingsScreen(ui: AppUi) {
         SetGroupCard {
             RowItem("star", "白名单管理", "永不清理的应用", "${ui.whitelist.size} 个") { showWhite = true }
             SetDivider()
-            RowItem("power", "自启动治理", "禁止应用开机自启，减少后台占用", "") { showAutoStart = true }
+            RowItem("power", "后台自启管理", "禁止应用后台自启（限制后台运行，不影响前台）", "") { showAutoStart = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.3.1 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.3.2 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -376,8 +376,12 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
         .sortedWith(compareBy({ if (ui.isAutoStartBlocked(it.packageName)) 0 else 1 }, { -(memMap[it.packageName] ?: 0L) }))
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
-            Text("自启动治理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-            Text("禁止自启 = 用系统 AppOps 限制其后台运行（不改动应用、不冻结，可随时恢复）· 共 ${autoApps.size} 个自启动应用，已禁止的优先，其余按内存排序", color = C.text2, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("后台自启管理", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("共 ${autoApps.size} 个", color = C.muted, fontSize = 11.sp)
+            }
+            Text("禁止后限制其后台运行，不影响前台使用，可随时恢复", color = C.text2, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 3.dp, bottom = 10.dp))
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(autoApps, key = { it.packageName }) { a ->
                     val mem = (memMap[a.packageName] ?: 0L) / 1024
@@ -387,10 +391,10 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
                             Text(a.label, color = C.text, fontSize = 13.sp, maxLines = 1)
                             Text("${a.packageName} · ${mem}MB", color = C.muted, fontSize = 9.5.sp, maxLines = 1)
                         }
-                        TagC(if (blocked) "已禁止自启" else "允许自启", if (blocked) C.warn else C.accent)
+                        TagC(if (blocked) "已禁止" else "允许", if (blocked) C.warn else C.accent)
 
                         Spacer(Modifier.width(8.dp))
-                        MiniAction(if (blocked) "恢复自启" else "禁止自启") {
+                        MiniAction(if (blocked) "恢复" else "禁止") {
                             scope.launch { ui.setAutoStartBlocked(a.packageName, !blocked) }
                         }
                     }
@@ -416,7 +420,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.3.1", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.3.2", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",

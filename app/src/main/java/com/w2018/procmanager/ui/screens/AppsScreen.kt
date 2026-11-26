@@ -549,15 +549,15 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     ProcButton(
-                        text = if (autoBlocked) "恢复开机自启" else "禁止开机自启",
+                        text = if (autoBlocked) "恢复后台自启" else "禁止后台自启",
                         onClick = {
                             confirm.show(
-                                if (autoBlocked) "恢复 ${a.label} 开机自启?" else "禁止 ${a.label} 开机自启?",
-                                "通过系统 AppOps（RUN_ANY_IN_BACKGROUND）限制其开机/后台自启，不改动应用、不冻结，可随时恢复。"
+                                if (autoBlocked) "恢复 ${a.label} 后台自启?" else "禁止 ${a.label} 后台自启?",
+                                "限制该应用后台运行，不影响前台使用，可随时恢复。"
                             ) {
                                 scope.launch {
                                     val ok = ui.setAutoStartBlocked(pkg, !autoBlocked)
-                                    toast.show(if (ok) (if (autoBlocked) "已恢复开机自启" else "已禁止开机自启") else "操作失败，请检查权限通道")
+                                    toast.show(if (ok) (if (autoBlocked) "已恢复后台自启" else "已禁止后台自启") else "操作失败，请检查权限通道")
                                 }
                             }
                         },
