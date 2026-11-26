@@ -331,17 +331,17 @@ private fun MetricIcon(icon: String, value: String) {
     }
 }
 
-/** 列表刷新动效：刷新时顶部一条流动光带，提升刷新感知度。 */
+/** 列表刷新动效：仅刷新时顶部一条流动光带（非刷新态不启动动画，避免常驻占用 CPU）。 */
 @Composable
 private fun RefreshIndicator(active: Boolean, modifier: Modifier = Modifier) {
-    val inf = rememberInfiniteTransition(label = "refresh")
-    val x by inf.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(950, easing = LinearEasing), RepeatMode.Restart),
-        label = "x",
-    )
     Box(modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(C.card2)) {
         if (active) {
+            val inf = rememberInfiniteTransition(label = "refresh")
+            val x by inf.animateFloat(
+                initialValue = 0f, targetValue = 1f,
+                animationSpec = infiniteRepeatable(tween(950, easing = LinearEasing), RepeatMode.Restart),
+                label = "x",
+            )
             Box(
                 Modifier.fillMaxWidth(0.35f).fillMaxSize()
                     .graphicsLayer { translationX = x * (size.width / 0.35f) }

@@ -77,6 +77,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -270,15 +272,17 @@ fun MetricCard(icon: String, title: String, num: String, unit: String, delta: St
     }
 }
 
-/** 呼吸状态点（运行中状态动画）。 */
+/** 呼吸状态点（运行中状态动画）。仅入场短暂呼吸 2 次后静止，避免常驻无限动画持续占用 CPU。 */
 @Composable
 fun PulseDot(color: Color, size: Int = 7) {
-    val transition = rememberInfiniteTransition(label = "pulse")
-    val alpha by transition.animateFloat(
-        initialValue = 1f, targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulseAlpha",
-    )
-    Box(Modifier.size(size.dp).graphicsLayer { this.alpha = alpha }.clip(CircleShape).background(color))
+    val alpha = remember { Animatable(1f) }
+    LaunchedEffect(Unit) {
+        repeat(2) {
+            alpha.animateTo(0.35f, animationSpec = tween(500, easing = LinearEasing))
+            alpha.animateTo(1f, animationSpec = tween(500, easing = LinearEasing))
+        }
+    }
+    Box(Modifier.size(size.dp).graphicsLayer { this.alpha = alpha.value }.clip(CircleShape).background(color))
 }
 
 /** 迷你方形按钮（应用行右侧监控开关） */

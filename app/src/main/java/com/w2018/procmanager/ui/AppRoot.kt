@@ -196,7 +196,7 @@ fun AppRoot() {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 val onDash = tab == Tab.DASH
-                delay(if (onDash) 1200 else 3500)
+                delay(if (onDash) 2000 else 3500)
                 if (!ui.refreshing) runCatching { ui.refresh(lite = onDash) }
             }
         }
