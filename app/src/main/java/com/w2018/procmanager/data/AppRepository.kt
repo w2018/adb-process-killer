@@ -185,15 +185,34 @@ class AppRepository(
     fun memInfoCheap(): MemInfo = amMem()
 
     private var lastCpuStat: LongArray? = null
+    private var lastShellStatAt = 0L
+    private var lastShellCpu = CpuInfo.EMPTY
+    private var loggedStatFallback = false
 
     /**
-     * 无需 shell 的整机 CPU 占用：直接读 /proc/stat，按与上次采样的时间差计算（滚动窗口）。
-     * 用于首页 1~2 秒级轻量刷新，避免每次 fork `top` 进程带来的额外开销。
+     * 整机 CPU 占用（0~100%，所有核心合计）。优先直读 /proc/stat（免 shell、免 fork）；
+     * 个别机型对普通应用屏蔽 /proc/stat 时，自动回退到 shell `cat /proc/stat`（限频 4s）。
+     * 与上次采样的时间差计算滚动窗口，避免瞬时抖动。
      */
-    fun cpuInfoCheap(): CpuInfo = runCatching {
-        val line = File("/proc/stat").useLines { seq ->
-            seq.firstOrNull { it.startsWith("cpu ") }
-        } ?: return@runCatching CpuInfo.EMPTY
+    suspend fun cpuInfoCheap(): CpuInfo {
+        val text = runCatching { File("/proc/stat").readText() }.getOrNull()
+        if (text != null) return parseCpuStat(text)
+        if (!loggedStatFallback) {
+            loggedStatFallback = true
+            android.util.Log.w("ProcKiller", "/proc/stat 不可读，改用 shell 回退读取 CPU")
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastShellStatAt >= 4000) {
+            lastShellStatAt = now
+            val r = runCatching { channels.run("cat /proc/stat", 4000) }.getOrNull()
+            if (r != null && r.ok) lastShellCpu = parseCpuStat(r.stdout)
+        }
+        return lastShellCpu
+    }
+
+    /** 解析 /proc/stat 的 "cpu " 汇总行，用与上次的差值算整机 CPU 使用率。 */
+    private fun parseCpuStat(text: String): CpuInfo {
+        val line = text.lineSequence().firstOrNull { it.startsWith("cpu ") } ?: return CpuInfo.EMPTY
         val p = line.trim().split(Regex("\\s+"))
         fun v(i: Int) = p.getOrNull(i)?.toLongOrNull() ?: 0L
         val total = (1..8).sumOf { v(it) }        // user..steal
@@ -205,8 +224,8 @@ class AppRepository(
             val di = idle - prev[1]
             if (dt > 0) ((dt - di).toFloat() / dt * 100f).coerceIn(0f, 100f) else 0f
         } else 0f
-        CpuInfo(used, "—")
-    }.getOrDefault(CpuInfo.EMPTY)
+        return CpuInfo(used, "—")
+    }
 
     // ---------------- 进程杀手自身占用 ----------------
 
@@ -224,8 +243,10 @@ class AppRepository(
         val pss = runCatching {
             val am = context.getSystemService(android.app.ActivityManager::class.java)
             am.getProcessMemoryInfo(intArrayOf(pid))[0].totalPss.toLong()
-        }.getOrDefault(0L)
-        val ticks = runCatching { readCpuTicks(pid) }.getOrDefault(-1L)
+        }.getOrElse { android.util.Log.w("ProcKiller", "selfUsage pss failed", it); 0L }
+        val ticks = runCatching { readCpuTicks(pid) }.getOrElse {
+            android.util.Log.w("ProcKiller", "selfUsage ticks failed", it); -1L
+        }
         val now = SystemClock.elapsedRealtime()
         var pct = 0f
         if (ticks >= 0 && lastSelfTicks >= 0 && now > lastSelfTime) {
@@ -406,13 +427,16 @@ class AppRepository(
         if (!ready) {
             // 未连接权限通道：仍展示已安装应用（用户/系统）与系统内存（ActivityManager 读取），
             // 进程/CPU 需要 shell 才能获取，此处留空而不报错，避免界面卡顿。
-            return@withContext Snapshot(apps, emptyList(), memInfo(), CpuInfo.EMPTY, System.currentTimeMillis())
+            return@withContext Snapshot(apps, emptyList(), memInfoCheap(), CpuInfo.EMPTY, System.currentTimeMillis())
         }
         // lite：仅 2 帧 top + 跳过 dumpsys meminfo，用于「扫描」过程快速取快照（省 1~2 秒）
-        val top = channels.run(if (lite) "top -b -n 2 -d 1" else TopCmd.CMD, timeoutMs = 20000).stdout
-        val procs = processes(top, lite)
-        val mem = memInfo()
-        val cpu = parseCpu(top)
+        // 采集任一步失败都不让整体抛异常：进程为空也照常返回内存/CPU，避免界面全部归零。
+        val top = runCatching {
+            channels.run(if (lite) "top -b -n 2 -d 1" else TopCmd.CMD, timeoutMs = 20000).stdout
+        }.getOrDefault("")
+        val procs = runCatching { processes(top, lite) }.getOrDefault(emptyList())
+        val mem = memInfoCheap()
+        val cpu = cpuInfoCheap()
         Snapshot(apps, procs, mem, cpu, System.currentTimeMillis())
     }
 }

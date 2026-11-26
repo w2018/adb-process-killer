@@ -1,7 +1,14 @@
 package com.w2018.procmanager.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,7 +39,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -224,13 +230,20 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
                 Ic("chevron", 14, C.accent)
             }
         })
+        val loading = !ui.firstLoaded
+        if (loading) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                LoadingSpinner(18)
+            }
+            Spacer(Modifier.height(6.dp))
+        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(1f)) { MetricCard("memory", "可用内存", String.format("%.1f", availGb), "GB", "系统 MemAvailable", false) }
-            Box(Modifier.weight(1f)) { MetricCard("cpu", "CPU 占用", String.format("%.1f", cpuPct), "%", "实时采样", false) }
+            Box(Modifier.weight(1f)) { MetricCard("memory", "可用内存", if (loading) "—" else String.format("%.1f", availGb), "GB", "系统 MemAvailable", false) }
+            Box(Modifier.weight(1f)) { MetricCard("cpu", "CPU 占用", if (loading) "—" else String.format("%.1f", cpuPct), "%", "实时采样", false) }
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.weight(1f)) { MetricCard("grid", "后台进程", "$bgProcs", "个", "非前台应用进程", false) }
+            Box(Modifier.weight(1f)) { MetricCard("grid", "后台进程", if (loading) "—" else "$bgProcs", "个", "非前台应用进程", false) }
             Box(Modifier.weight(1f)) { MetricCard("clock", "扫描间隔", "${ui.cfg.scan}", "秒", "下次 ${ui.cfg.scan}s 后", true) }
         }
         Spacer(Modifier.height(16.dp))
@@ -240,10 +253,10 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
         })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Box(Modifier.weight(1f)) {
-                MetricCard("shield", "本应用内存", String.format("%.1f", ui.selfMemKb / 1024f), "MB", "自身进程 PSS", ui.selfMemKb > 200 * 1024)
+                MetricCard("shield", "本应用内存", if (loading) "—" else String.format("%.1f", ui.selfMemKb / 1024f), "MB", "自身进程 PSS", ui.selfMemKb > 200 * 1024)
             }
             Box(Modifier.weight(1f)) {
-                MetricCard("activity", "本应用 CPU", String.format("%.1f", ui.selfCpuPct), "%", "自身进程实时", ui.selfCpuPct > 10f)
+                MetricCard("activity", "本应用 CPU", if (loading) "—" else String.format("%.1f", ui.selfCpuPct), "%", "自身进程实时", ui.selfCpuPct > 10f)
             }
         }
         Spacer(Modifier.height(16.dp))
@@ -570,4 +583,35 @@ fun timeText(ms: Long): String {
     val d = java.util.Date(ms)
     val f = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
     return f.format(d)
+}
+
+/** 矢量转圈加载指示（SVG 风格双弧旋转），仅加载期间显示。 */
+@Composable
+private fun LoadingSpinner(sizeDp: Int = 18) {
+    val t = rememberInfiniteTransition(label = "spin")
+    val angle by t.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(850, easing = LinearEasing)),
+        label = "angle",
+    )
+    Canvas(Modifier.size(sizeDp.dp)) {
+        val stroke = this.size.minDimension * 0.16f
+        val inset = stroke / 2f
+        val arcSize = Size(this.size.width - stroke, this.size.height - stroke)
+        drawArc(
+            color = C.accent.copy(alpha = 0.18f),
+            startAngle = 0f, sweepAngle = 360f, useCenter = false,
+            topLeft = Offset(inset, inset), size = arcSize,
+            style = Stroke(stroke, cap = StrokeCap.Round),
+        )
+        rotate(angle) {
+            drawArc(
+                color = C.accent,
+                startAngle = -90f, sweepAngle = 100f, useCenter = false,
+                topLeft = Offset(inset, inset), size = arcSize,
+                style = Stroke(stroke, cap = StrokeCap.Round),
+            )
+        }
+    }
 }

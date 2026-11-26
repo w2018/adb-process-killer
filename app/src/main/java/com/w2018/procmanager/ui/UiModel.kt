@@ -124,6 +124,8 @@ class AppUi(val app: ProcApp) {
     /** 每个应用累计被清理次数（pkg -> 次数），用于排行榜。 */
     var killCounts by mutableStateOf<Map<String, Int>>(emptyMap()); private set
     var refreshing by mutableStateOf(false); private set
+    /** 首次实时数据是否已就绪（用于首页加载动画；渠道未连接时以拿到内存为准）。 */
+    var firstLoaded by mutableStateOf(false); private set
     var a11y by mutableStateOf(false); private set
     /** 内存使用率历史（近 12 次刷新），用于趋势图真实数据。 */
     var memHistory by mutableStateOf<List<Float>>(emptyList()); private set
@@ -178,7 +180,25 @@ class AppUi(val app: ProcApp) {
             val su = app.repo.selfUsage()
             selfMemKb = su.memPssKb
             selfCpuPct = su.cpuPercent
-        } catch (_: Throwable) {}
+        } catch (e: Throwable) {
+            android.util.Log.w("ProcKiller", "refresh() failed: " + e, e)
+        }
+        // 首次数据就绪判定：拿到内存且（进程列表非空 或 渠道未连接时无进程可采）即认为就绪
+        run {
+            val s = snapshot
+            if (!firstLoaded && s != null && s.mem.totalKb > 0 && (s.processes.isNotEmpty() || !channelReady)) {
+                firstLoaded = true
+            }
+        }
+        // 兜底：即使采集抛异常也要有一个可用快照，保证界面不整体归零（至少显示应用/内存）
+        if (snapshot == null) {
+            snapshot = runCatching {
+                com.w2018.procmanager.data.model.Snapshot(
+                    app.repo.apps(), emptyList(), app.repo.memInfoCheap(),
+                    com.w2018.procmanager.data.model.CpuInfo.EMPTY, System.currentTimeMillis()
+                )
+            }.getOrNull()
+        }
         shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
         monitored = app.settings.monitored
         whitelist = app.settings.whitelist
