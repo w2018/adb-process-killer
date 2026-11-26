@@ -5,6 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Process
+import android.os.SystemClock
+import android.system.Os
+import android.system.OsConstants
+import java.io.File
 import com.w2018.procmanager.data.model.AppInfo
 import com.w2018.procmanager.data.model.CpuInfo
 import com.w2018.procmanager.data.model.MemInfo
@@ -25,6 +30,12 @@ data class BootReceiverInfo(
     val enabled: Boolean
 )
 
+/** 进程杀手自身进程的资源占用。 */
+data class SelfUsage(
+    val memPssKb: Long,
+    val cpuPercent: Float
+)
+
 class AppRepository(
     private val context: Context,
     private val channels: ChannelManager
@@ -40,6 +51,7 @@ class AppRepository(
         val list = ArrayList<AppInfo>()
         val installed = pm.getInstalledPackages(PackageManager.GET_META_DATA)
         for (p in installed) {
+            if (p.packageName == context.packageName) continue // 默认排除「进程杀手」自身
             val ai = p.applicationInfo ?: continue
             val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             val label = runCatching { pm.getApplicationLabel(ai).toString() }
@@ -167,6 +179,73 @@ class AppRepository(
     private object TopCmd {
         // 3 帧取均值，降低瞬时抖动（CPU 规则更稳定）
         const val CMD = "top -b -n 3 -d 1"
+    }
+
+    /** 无需 shell 的系统内存（ActivityManager），用于首页高频轻量刷新。 */
+    fun memInfoCheap(): MemInfo = amMem()
+
+    private var lastCpuStat: LongArray? = null
+
+    /**
+     * 无需 shell 的整机 CPU 占用：直接读 /proc/stat，按与上次采样的时间差计算（滚动窗口）。
+     * 用于首页 1~2 秒级轻量刷新，避免每次 fork `top` 进程带来的额外开销。
+     */
+    fun cpuInfoCheap(): CpuInfo = runCatching {
+        val line = File("/proc/stat").useLines { seq ->
+            seq.firstOrNull { it.startsWith("cpu ") }
+        } ?: return@runCatching CpuInfo.EMPTY
+        val p = line.trim().split(Regex("\\s+"))
+        fun v(i: Int) = p.getOrNull(i)?.toLongOrNull() ?: 0L
+        val total = (1..8).sumOf { v(it) }        // user..steal
+        val idle = v(4) + v(5)                     // idle + iowait
+        val prev = lastCpuStat
+        lastCpuStat = longArrayOf(total, idle)
+        val used = if (prev != null) {
+            val dt = total - prev[0]
+            val di = idle - prev[1]
+            if (dt > 0) ((dt - di).toFloat() / dt * 100f).coerceIn(0f, 100f) else 0f
+        } else 0f
+        CpuInfo(used, "—")
+    }.getOrDefault(CpuInfo.EMPTY)
+
+    // ---------------- 进程杀手自身占用 ----------------
+
+    private var lastSelfTicks = -1L
+    private var lastSelfTime = 0L
+    private val clkTck: Long =
+        runCatching { Os.sysconf(OsConstants._SC_CLK_TCK).toLong() }.getOrDefault(100L)
+
+    /**
+     * 读取本应用自身进程的 PSS 内存与 CPU 占用。全部通过 ActivityManager + /proc 读取，无需 shell。
+     * CPU 用最近一次采样到本次的时间差计算（滚动），首次返回 0。
+     */
+    fun selfUsage(): SelfUsage {
+        val pid = Process.myPid()
+        val pss = runCatching {
+            val am = context.getSystemService(android.app.ActivityManager::class.java)
+            am.getProcessMemoryInfo(intArrayOf(pid))[0].totalPss.toLong()
+        }.getOrDefault(0L)
+        val ticks = runCatching { readCpuTicks(pid) }.getOrDefault(-1L)
+        val now = SystemClock.elapsedRealtime()
+        var pct = 0f
+        if (ticks >= 0 && lastSelfTicks >= 0 && now > lastSelfTime) {
+            val d = ticks - lastSelfTicks
+            val dt = now - lastSelfTime
+            if (d >= 0 && dt > 0) pct = (d.toFloat() / clkTck) / (dt / 1000f) * 100f
+        }
+        if (ticks >= 0) { lastSelfTicks = ticks; lastSelfTime = now }
+        return SelfUsage(pss, pct.coerceIn(0f, 100f))
+    }
+
+    /** 读取指定 pid 的 utime+stime（时钟滴答数）。 */
+    private fun readCpuTicks(pid: Int): Long {
+        val s = File("/proc/$pid/stat").readText()
+        val idx = s.lastIndexOf(')')
+        if (idx < 0) return -1L
+        val parts = s.substring(idx + 2).trim().split(Regex("\\s+"))
+        val ut = parts.getOrNull(11)?.toLongOrNull() ?: return -1L
+        val st = parts.getOrNull(12)?.toLongOrNull() ?: return -1L
+        return ut + st
     }
 
     suspend fun cpuInfo(): CpuInfo = withContext(Dispatchers.IO) {

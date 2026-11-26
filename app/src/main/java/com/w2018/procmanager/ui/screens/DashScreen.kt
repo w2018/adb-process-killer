@@ -235,6 +235,19 @@ fun DashScreen(ui: AppUi, onOpenSettings: () -> Unit = {}, onOpenLogs: (String) 
         }
         Spacer(Modifier.height(16.dp))
 
+        SectionTitle("应用自身占用", action = {
+            Text("进程杀手本体", color = C.muted, fontSize = 11.sp)
+        })
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.weight(1f)) {
+                MetricCard("shield", "本应用内存", String.format("%.1f", ui.selfMemKb / 1024f), "MB", "自身进程 PSS", ui.selfMemKb > 200 * 1024)
+            }
+            Box(Modifier.weight(1f)) {
+                MetricCard("activity", "本应用 CPU", String.format("%.1f", ui.selfCpuPct), "%", "自身进程实时", ui.selfCpuPct > 10f)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
         SectionTitle("内存占用趋势", action = {
             Text("最近 12 次采样", color = C.muted, fontSize = 11.sp)
         })

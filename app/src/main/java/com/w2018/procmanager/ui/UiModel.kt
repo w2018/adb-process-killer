@@ -127,6 +127,12 @@ class AppUi(val app: ProcApp) {
     var a11y by mutableStateOf(false); private set
     /** 内存使用率历史（近 12 次刷新），用于趋势图真实数据。 */
     var memHistory by mutableStateOf<List<Float>>(emptyList()); private set
+    /** 进程杀手自身进程内存占用（PSS，KB）。 */
+    var selfMemKb by mutableStateOf(0L); private set
+    /** 进程杀手自身进程 CPU 占用（%）。 */
+    var selfCpuPct by mutableStateOf(0f); private set
+    /** 缓存最近一次完整快照，首页轻量刷新时复用（避免每次都跑 top/ps/dumpsys）。 */
+    private var cachedFull: Snapshot? = null
     /** 一次性提示消息（由 AppRoot 转成自绘 Toast）。 */
     var message by mutableStateOf<String?>(null)
     /** 单应用规则变更版本号，驱动详情页重组。 */
@@ -151,9 +157,27 @@ class AppUi(val app: ProcApp) {
     suspend fun refresh(lite: Boolean = false) {
         refreshing = true
         try {
-            snapshot = app.repo.snapshot(lite = lite)
+            if (!lite) {
+                val s = app.repo.snapshot(lite = false)
+                snapshot = s; cachedFull = s
+            } else {
+                // 轻量刷新：复用上次完整快照的进程/应用列表，仅用 /proc 与 ActivityManager 便宜地更新内存/CPU，
+                // 不再每次 fork top/ps/dumpsys，显著降低本应用自身 CPU/内存开销。
+                val base = cachedFull
+                if (base == null) {
+                    val s = app.repo.snapshot(lite = false)
+                    snapshot = s; cachedFull = s
+                } else {
+                    val mem = app.repo.memInfoCheap()
+                    val cpu = app.repo.cpuInfoCheap()
+                    snapshot = Snapshot(base.apps, base.processes, mem, cpu, System.currentTimeMillis())
+                }
+            }
             frozen = app.settings.frozenPkgs
             if (!lite) disabledApps = runCatching { app.repo.disabledApps() }.getOrDefault(emptyList())
+            val su = app.repo.selfUsage()
+            selfMemKb = su.memPssKb
+            selfCpuPct = su.cpuPercent
         } catch (_: Throwable) {}
         shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
         monitored = app.settings.monitored
