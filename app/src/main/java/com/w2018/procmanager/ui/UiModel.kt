@@ -116,6 +116,7 @@ class AppUi(val app: ProcApp) {
     var bootReceivers by mutableStateOf<List<BootReceiverInfo>>(emptyList()); private set
     /** 已被 AppOps 限制后台运行（禁止自启）的包名集合。 */
     var bgRestricted by mutableStateOf<Set<String>>(emptySet()); private set
+    var bgLimited by mutableStateOf<Set<String>>(emptySet()); private set
     var logs by mutableStateOf<List<LogEvent>>(emptyList()); private set
     var blocked by mutableStateOf(0); private set
     var freedKb by mutableStateOf(0L); private set
@@ -144,6 +145,7 @@ class AppUi(val app: ProcApp) {
 
     init {
         bgRestricted = app.settings.autoStartBlocked
+        bgLimited = app.settings.bgLimited
         runCatching {
             Shizuku.addRequestPermissionResultListener { _, _ ->
                 shizukuText = runCatching { app.channels.shizukuStatusText() }.getOrDefault("")
@@ -410,6 +412,20 @@ class AppUi(val app: ProcApp) {
         if (ok) {
             app.settings.setAutoStartBlocked(pkg, blocked)
             bgRestricted = app.settings.autoStartBlocked
+        }
+        return ok
+    }
+
+    /** 该应用是否已深度限制后台能力。 */
+    fun isBgLimited(pkg: String): Boolean = bgLimited.contains(pkg)
+
+    /** 深度限制/恢复后台能力：一次限制后台运行、唤醒锁、后台拉起前台服务（AppOps，免 root）。 */
+    suspend fun setBgLimited(pkg: String, limited: Boolean): Boolean {
+        if (!channelReady) return false
+        val ok = app.repo.setBgLimit(pkg, limited)
+        if (ok) {
+            app.settings.setBgLimited(pkg, limited)
+            bgLimited = app.settings.bgLimited
         }
         return ok
     }

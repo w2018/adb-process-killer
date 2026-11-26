@@ -59,6 +59,7 @@ fun SettingsScreen(ui: AppUi) {
     var showWhite by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showAutoStart by remember { mutableStateOf(false) }
+    var showDeep by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
 
     Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(horizontal = 16.dp).padding(bottom = 24.dp)) {
@@ -255,8 +256,9 @@ fun SettingsScreen(ui: AppUi) {
             RowItem("star", "白名单管理", "永不清理的应用", "${ui.whitelist.size} 个") { showWhite = true }
             SetDivider()
             RowItem("power", "后台自启管理", "禁止应用后台自启（限制后台运行，不影响前台）", "") { showAutoStart = true }
+            RowItem("lock", "后台深度限制", "限制后台运行 / 唤醒锁 / 前台服务（AppOps）", "${ui.bgLimited.size} 个") { showDeep = true }
             SetDivider()
-            RowItem("info", "关于进程杀手", "版本 0.3.2 · Shizuku / ADB", "") { showAbout = true }
+            RowItem("info", "关于进程杀手", "版本 0.3.3 · Shizuku / ADB", "") { showAbout = true }
         }
         Text("省电设计：非精确闹钟周期唤醒 · 短时持锁及时释放 · 调用频率上限 · 无变化跳过处理",
             color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 10.dp), lineHeight = 15.sp)
@@ -265,6 +267,7 @@ fun SettingsScreen(ui: AppUi) {
     if (showWhite) WhitelistDialog(ui) { showWhite = false }
     if (showAbout) AboutDialog { showAbout = false }
     if (showAutoStart) AutoStartDialog(ui) { showAutoStart = false }
+    if (showDeep) DeepLimitDialog(ui) { showDeep = false }
 }
 
 @Composable
@@ -410,6 +413,61 @@ private fun AutoStartDialog(ui: AppUi, onClose: () -> Unit) {
 }
 
 @Composable
+private fun DeepLimitDialog(ui: AppUi, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val apps = ui.snapshot?.apps ?: emptyList()
+    var q by remember { mutableStateOf("") }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("后台深度限制", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("已限制 ${ui.bgLimited.size} 个", color = C.muted, fontSize = 11.sp)
+            }
+            Text("限制后台运行 / 唤醒锁 / 前台服务启动，不影响前台使用，可随时恢复", color = C.text2, fontSize = 11.sp, maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 3.dp, bottom = 8.dp))
+            OutlinedTextField(
+                value = q, onValueChange = { q = it }, singleLine = true,
+                placeholder = { Text("搜索应用名称或包名", color = C.muted, fontSize = 12.5.sp) },
+                leadingIcon = { Ic("search", 16, C.muted) },
+                trailingIcon = {
+                    if (q.isNotEmpty()) Box(Modifier.clip(RoundedCornerShape(50)).clickable { q = "" }.padding(6.dp)) { Ic("x", 14, C.muted) }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = C.card, unfocusedContainerColor = C.card,
+                    focusedBorderColor = C.accent, unfocusedBorderColor = C.border,
+                    focusedTextColor = C.text, unfocusedTextColor = C.text, cursorColor = C.accent,
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            val shown = apps
+                .filter { !it.isSystem && it.packageName != ui.app.packageName && (q.isBlank() || it.label.contains(q, true) || it.packageName.contains(q, true)) }
+                .sortedWith(compareBy({ if (ui.isBgLimited(it.packageName)) 0 else 1 }, { it.label }))
+            LazyColumn(Modifier.fillMaxWidth().padding(top = 6.dp).weight(1f, fill = false)) {
+                items(shown, key = { it.packageName }) { a ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(a.label, color = C.text, fontSize = 13.sp, maxLines = 1)
+                            Text(a.packageName, color = C.muted, fontSize = 9.5.sp, maxLines = 1)
+                        }
+                        TagC(if (ui.isBgLimited(a.packageName)) "已限制" else "允许", if (ui.isBgLimited(a.packageName)) C.warn else C.accent)
+                        Spacer(Modifier.width(8.dp))
+                        ProcSwitch(ui.isBgLimited(a.packageName)) {
+                            scope.launch { ui.setBgLimited(a.packageName, !ui.isBgLimited(a.packageName)) }
+                        }
+                    }
+                }
+                if (shown.isEmpty()) {
+                    item { Text("没有符合条件的应用", color = C.muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 16.dp)) }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            ProcButton("完成", onClick = onClose, kind = BtnKind.Primary, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
 private fun AboutDialog(onClose: () -> Unit) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(C.bg2).padding(20.dp)) {
@@ -420,7 +478,7 @@ private fun AboutDialog(onClose: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("进程杀手", color = C.text, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text("版本 0.3.2", color = C.text2, fontSize = 11.sp)
+                    Text("版本 0.3.3", color = C.text2, fontSize = 11.sp)
                 }
             }
             Text("面向旧设备的后台进程治理工具：通过 Shizuku / 无线 ADB 获得 shell 权限，读取并管理（含系统应用）后台进程，按规则自动清理以降低发热与卡顿。所有操作仅限「读取进程 / 冻结停用 / 终止运行」，不会卸载应用或清除数据。",

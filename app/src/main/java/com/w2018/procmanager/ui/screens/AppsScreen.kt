@@ -367,6 +367,7 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
     val monitored = ui.monitored.contains(pkg)
     val bgStop = ui.isBgStop(pkg)
     val autoBlocked = ui.isAutoStartBlocked(pkg)
+    val bgLimited = ui.isBgLimited(pkg)
     val critical = SystemApps.isCritical(pkg)
     val status = when { frozen -> "已冻结"; fg -> "前台"; procs.isNotEmpty() -> "后台运行"; else -> "未运行" }
 
@@ -566,6 +567,26 @@ fun AppDetailSheet(ui: AppUi, pkg: String, onClose: () -> Unit) {
                         leading = { Ic("power", 17, if (autoBlocked) C.accent else C.danger) },
                     )
                 }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ProcButton(
+                    text = if (bgLimited) "恢复后台能力" else "深度限制后台",
+                    onClick = {
+                        confirm.show(
+                            if (bgLimited) "恢复 ${a.label} 后台能力?" else "深度限制 ${a.label} 后台能力?",
+                            "限制该应用后台运行、唤醒锁与前台服务启动（AppOps），不影响前台使用，可随时恢复。"
+                        ) {
+                            scope.launch {
+                                val ok = ui.setBgLimited(pkg, !bgLimited)
+                                toast.show(if (ok) (if (bgLimited) "已恢复后台能力" else "已深度限制后台") else "操作失败，请检查权限通道")
+                            }
+                        }
+                    },
+                    kind = if (bgLimited) BtnKind.Primary else BtnKind.Danger,
+                    modifier = Modifier.fillMaxWidth(),
+                    leading = { Ic("lock", 17, if (bgLimited) C.accent else C.danger) },
+                )
             }
             Text("冻结=pm disable-user，终止=am force-stop，禁止自启=AppOps；本应用不会卸载应用或清除数据，均需 Shizuku 或 ADB 授权。",
                 color = C.muted, fontSize = 10.sp, modifier = Modifier.padding(top = 14.dp), lineHeight = 15.sp)

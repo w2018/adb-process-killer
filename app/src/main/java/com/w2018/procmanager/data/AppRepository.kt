@@ -134,6 +134,16 @@ class AppRepository(
         return r.ok || r.exitCode == 0
     }
 
+    /** 深度限制后台能力：一次限制后台运行 / 唤醒锁 / 后台拉起前台服务（AppOps，均免 root）。 */
+    suspend fun setBgLimit(pkg: String, limited: Boolean): Boolean {
+        val mode = if (limited) "ignore" else "default"
+        val cmd = "cmd appops set $pkg RUN_ANY_IN_BACKGROUND $mode; " +
+            "cmd appops set $pkg WAKE_LOCK $mode; " +
+            "cmd appops set $pkg START_FOREGROUND $mode"
+        val r = channels.run(cmd, 8000)
+        return r.ok || r.exitCode == 0
+    }
+
     /** 当前被冻结（disabled）的包名集合，用于恢复冻结状态展示。 */
     suspend fun disabledPackages(): Set<String> = withContext(Dispatchers.IO) {
         val r = channels.run("pm list packages -d")

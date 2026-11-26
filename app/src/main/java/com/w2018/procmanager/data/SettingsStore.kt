@@ -158,6 +158,18 @@ class SettingsStore(context: Context) {
         autoStartBlocked = s
     }
 
+    // ---- 深度限制后台能力（AppOps: 后台运行/唤醒锁/前台服务），本地记录保证 UI 一致 ----
+    var bgLimited: Set<String>
+        get() = sp.getStringSet("bgLimited", emptySet()) ?: emptySet()
+        set(v) = sp.edit { putStringSet("bgLimited", v) }
+
+    fun isBgLimited(pkg: String) = bgLimited.contains(pkg)
+    fun setBgLimited(pkg: String, limited: Boolean) {
+        val s = bgLimited.toMutableSet()
+        if (limited) s.add(pkg) else s.remove(pkg)
+        bgLimited = s
+    }
+
     // ---- 单应用独立规则（0 表示跟随全局） ----
     data class PerAppCfg(
         val enabled: Boolean = false,
